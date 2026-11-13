@@ -1,0 +1,23 @@
+#!/bin/sh
+set -eu
+
+. /usr/lib/xcloud-bypass/common.sh
+. "$XCB_LIBRARY_DIR/validate.sh"
+. "$XCB_LIBRARY_DIR/private.sh"
+. "$XCB_LIBRARY_DIR/state.sh"
+. "$XCB_LIBRARY_DIR/transaction.sh"
+
+[ "$#" -eq 1 ] && xcb_state_id "$1" || exit 1
+umask 077
+runtime=$(xcb_runtime_directory) || exit 1
+xcb_state_mark "$runtime/watch.$1" "$$" || exit 1
+
+while :; do
+	result=0
+	xcb_transaction tick "$1" || result=$?
+	case "$result" in
+		0|2) exit 0 ;;
+		3|4) sleep 1 ;;
+		*) exit 1 ;;
+	esac
+done

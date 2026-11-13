@@ -18,7 +18,7 @@ if command -v busybox >/dev/null 2>&1; then
 	applet_dir=$(mktemp -d)
 	trap 'rm -rf "$applet_dir"' EXIT
 	trap 'exit 1' HUP INT TERM
-	for applet in awk grep head id mkdir mktemp mv rm stat tr wc; do
+	for applet in awk cat chmod cmp cp cut du grep head id ls mkdir mktemp mv od rm sha256sum sleep sort stat sync tail tr wc; do
 		ln -s "$busybox_bin" "$applet_dir/$applet"
 	done
 	PATH="$applet_dir:$PATH" XCB_TEST_SHELL='busybox ash' \
