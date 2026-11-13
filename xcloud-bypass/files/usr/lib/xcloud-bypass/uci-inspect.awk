@@ -32,7 +32,8 @@ function consume(text,    i, ch, quote, escaped, token, started, n, a, key, valu
 	if (package == "network") keep = key ~ /^(proto|device|ifname|ipaddr|netmask|gateway|defaultroute)$/
 	else if (package == "firewall") keep = key ~ /^(name|network|device|subnet|input|output|forward|masq|masq_src|masq_dest|family|enabled|src|dest|target|proto|dest_port)$/
 	else if (package == "openvpn") keep = key ~ /^(config|dev|dev_type|enabled|enable|up|down|route_up|route_pre_down|ipchange|script_security)$/
-	else if (package == "dhcp") keep = key ~ /^(name|ip|leasename|leasefile)$/
+	else if (package == "dhcp") keep = key ~ /^(name|ip|leasename|leasefile|port|interface|notinterface|listen_address|dhcp_option|dhcp_option_force|ignore|disabled)$/
+	else if (package == "pbr") keep = key ~ /^(enabled|resolver_set|resolver_instance|supported_interface|ignored_interface|ipv6_enabled|netifd_enabled|name|interface|chain|proto|src_addr|src_port|dest_addr|dest_port|dest_dns)$/
 	else fail()
 	if (!keep) return
 	value = a[3]

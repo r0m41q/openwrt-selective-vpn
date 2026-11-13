@@ -14,7 +14,7 @@ define Package/xcloud-bypass
   TITLE:=Selective Xbox Cloud Gaming authentication routing
   URL:=https://github.com/r0m41q/openwrt-xcloud-bypass
   PKGARCH:=all
-  DEPENDS:=+pbr +openvpn-openssl +firewall4 +uci +ubus +jshn +jsonfilter +ip-full +nftables-json +flock
+  DEPENDS:=+pbr +openvpn-openssl +firewall4 +uci +ubus +jshn +jsonfilter +ip-full +nftables-json +flock +ss
 endef
 
 define Package/xcloud-bypass/description

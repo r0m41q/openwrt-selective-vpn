@@ -10,7 +10,7 @@ def query(path, expression):
     values = [json.loads(Path(path).read_text())]
     position = 1
     while position < len(expression):
-        match = re.match(r"\.([a-zA-Z0-9_]+)|\[(\d+|\*|'[^']+')\]", expression[position:])
+        match = re.match(r"\.([a-zA-Z0-9_]+|\*)|\[(\d+|\*|'[^']+')\]", expression[position:])
         if not match:
             raise ValueError("unsupported fixture query")
         key = match[1] if match[1] is not None else match[2]
@@ -20,6 +20,8 @@ def query(path, expression):
         for value in values:
             if key == "*" and isinstance(value, list):
                 result.extend(value)
+            elif key == "*" and isinstance(value, dict):
+                result.extend(value.values())
             elif isinstance(value, list) and key.isdigit() and int(key) < len(value):
                 result.append(value[int(key)])
             elif isinstance(value, dict) and key in value:
