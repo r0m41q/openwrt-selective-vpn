@@ -244,6 +244,7 @@ class ProfileTests(unittest.TestCase):
         second = self.prepare((first / "client.ovpn").read_bytes())
         profile = (second / "client.ovpn").read_text()
         self.assertEqual(profile.count("nobind\n"), 1)
+        self.assertEqual(profile.count("disable-dco\n"), 1)
         self.assertEqual(profile.count("auth-nocache\n"), 1)
         self.assertIn(f'auth-user-pass "{second}/credentials"', profile)
 

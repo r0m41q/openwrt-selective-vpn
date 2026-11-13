@@ -143,6 +143,10 @@ function inline_line(line, clean, label) {
 	line = $0
 	sub(/\r$/, "", line)
 	if (length(line) > 2048 || line ~ /\r/) fail("Oversized line or invalid line ending.")
+	if (inventory_block != "") {
+		if (line == "</" inventory_block ">") inventory_block = ""
+		next
+	}
 	if (block != "") {
 		inline_line(line)
 		next
@@ -152,6 +156,17 @@ function inline_line(line, clean, label) {
 	name = arg[1]
 	sub(/^--/, "", name)
 	arg[1] = name
+	if (mode == "inventory") {
+		if (name ~ /^<[a-z][a-z0-9-]*>$/ && name != "<connection>") {
+			inventory_block = substr(name, 2, length(name) - 2)
+		} else if (name == "dev") {
+			require(argc == 2 && !inventory_device++)
+			device = arg[2]
+		} else if (name == "config" || name ~ /connection/ || name == "dev-node") {
+			fail("Cannot determine the device used by an existing client.")
+		}
+		next
+	}
 	if (name ~ /^<[a-z][a-z0-9-]*>$/) {
 		require(argc == 1)
 		block = substr(name, 2, length(name) - 2)
@@ -172,6 +187,7 @@ function inline_line(line, clean, label) {
 	} else if (name == "dev") {
 		require(argc == 2 && arg[2] ~ /^[a-zA-Z][a-zA-Z0-9_.-]*$/ && length(arg[2]) <= 15 && arg[2] !~ /^tap/)
 		device_changed = 1
+		if (mode == "audit") require(arg[2] == device)
 		next
 	} else if (name == "dev-type") {
 		require(argc == 2 && arg[2] == "tun")
@@ -186,9 +202,19 @@ function inline_line(line, clean, label) {
 		require(argc == 2 && uint(arg[2], 65535) && arg[2] + 0 > 0)
 	} else if (name == "auth-user-pass") {
 		require(argc <= 2)
+		if (mode == "audit" && managed_credentials != "") require(argc == 2 && arg[2] == managed_credentials)
 		auth_required = 1
 		next
 	} else if (name ~ /^(ca|cert|key|tls-auth|tls-crypt|tls-crypt-v2)$/) {
+		if (mode == "audit" && audit_external && arg[2] != "[inline]") {
+			require(argc == 2 || (name == "tls-auth" && argc == 3 && arg[3] ~ /^[01]$/))
+			require(arg[2] ~ /^\/[a-zA-Z0-9_.\/-]+$/ && arg[2] !~ /\/\.\.?\// && arg[2] !~ /\/\.\.?$/)
+			external[name] = 1
+			if (argc == 3) direction = arg[3]
+			print arg[2] > references
+			emit()
+			next
+		}
 		if (arg[2] != "[inline]") fail("External certificate and key files are not supported.")
 		require(argc == 2 || (name == "tls-auth" && argc == 3 && arg[3] ~ /^[01]$/))
 		if (argc == 3) {
@@ -223,6 +249,7 @@ function inline_line(line, clean, label) {
 	} else if (name == "auth") {
 		require(argc == 2 && arg[2] ~ /^SHA(1|256|384|512)$/)
 	} else if (name ~ /^(redirect-gateway|redirect-private|route|route-ipv6|route-delay|route-metric|route-noexec)$/) {
+		if (mode == "audit") fail("The existing client has local routing directives.")
 		require(argc <= 9)
 		if (name == "route") require(argc >= 2 && argc <= 5)
 		else if (name == "route-ipv6") require(argc >= 2 && argc <= 4)
@@ -237,25 +264,33 @@ function inline_line(line, clean, label) {
 		removed_routes++
 		next
 	} else if (name ~ /^(dhcp-option|dns|block-outside-dns)$/) {
+		if (mode == "audit") fail("The existing client changes DNS settings.")
 		require(name == "block-outside-dns" ? argc == 1 : argc >= 2)
 		removed_dns++
 		next
 	} else if (name == "pull-filter") {
 		require(argc == 3 && arg[2] ~ /^(accept|ignore|reject)$/)
+		if (mode == "audit") {
+			require(arg[2] != "accept")
+			if (arg[3] == "ifconfig-ipv6") ipv6_filter = 1
+		}
 		replaced_filters++
 		next
 	} else if (name == "route-nopull") {
 		require(argc == 1)
+		split_routes = 1
 		next
 	} else if (name == "route-gateway") {
 		require(argc == 2 && (ipv4(arg[2]) || arg[2] == "dhcp"))
 	} else if (name == "ifconfig") {
 		require(argc == 3 && ipv4(arg[2]) && ipv4(arg[3]))
+		local_address = arg[2]; peer_address = arg[3]
 	} else if (name == "topology") {
 		require(argc == 2 && arg[2] ~ /^(subnet|net30|p2p)$/)
+		topology = arg[2]
 	} else if (name ~ /^(persist-key|persist-tun|nobind|remote-random|remote-random-hostname|auth-nocache|mute-replay-warnings|disable-dco)$/) {
 		require(argc == 1)
-		if (name == "nobind" || name == "auth-nocache") next
+		if (name == "nobind" || name == "auth-nocache" || name == "disable-dco") next
 	} else if (name == "auth-retry") {
 		require(argc == 2 && arg[2] ~ /^(nointeract|none)$/)
 	} else if (name == "allow-compression") {
@@ -281,17 +316,23 @@ function inline_line(line, clean, label) {
 
 END {
 	if (failed) exit 1
+	if (mode == "inventory") {
+		require(inventory_block == "" && inventory_device == 1)
+		print device
+		exit
+	}
 	if (block != "") fail("Unclosed inline block.")
 	if (!client) fail("A TLS client profile is required.")
 	if (!remotes) fail("At least one remote endpoint is required.")
+	if (mode == "audit") require(device_changed && split_routes && ipv6_filter && (options["dev-type"] || device ~ /^tun/ || audit_dev_type == "tun"))
 	for (name in inline_refs) if (!blocks[name]) fail("An inline certificate or key block is missing.")
-	if ((blocks["cert"] > 0) != (blocks["key"] > 0)) fail("Include both the client certificate and its private key.")
-	require(blocks["tls-auth"] + blocks["tls-crypt"] + blocks["tls-crypt-v2"] <= 1)
-	if (direction != "") require(blocks["tls-auth"])
+	if ((blocks["cert"] + external["cert"] > 0) != (blocks["key"] + external["key"] > 0)) fail("Include both the client certificate and its private key.")
+	require(blocks["tls-auth"] + blocks["tls-crypt"] + blocks["tls-crypt-v2"] + external["tls-auth"] + external["tls-crypt"] + external["tls-crypt-v2"] <= 1)
+	if (direction != "") require(blocks["tls-auth"] || external["tls-auth"])
 	if (tls_max != "" && tls_min != "") require(tls_max + 0 >= tls_min + 0)
 	if (blocks["peer-fingerprint"]) pins++
-	if (!pins && !(blocks["ca"] && verify_server)) fail("Include a CA and server identity check, or a SHA256 peer fingerprint.")
-	print "client\ndev " device "\ndev-type tun\nnobind\nroute-nopull" > output
+	if (!pins && !((blocks["ca"] || external["ca"]) && verify_server)) fail("Include a CA and server identity check, or a SHA256 peer fingerprint.")
+	print "client\ndev " device "\ndev-type tun\ndisable-dco\nnobind\nroute-nopull" > output
 	print "pull-filter ignore \"redirect-\"\npull-filter ignore \"dhcp-option\"\npull-filter ignore \"dns\"\npull-filter ignore \"block-outside-dns\"" > output
 	print "pull-filter ignore \"compress\"\npull-filter ignore \"comp-lzo\"\npull-filter ignore \"allow-compression\"\nallow-compression no" > output
 	print "pull-filter ignore \"setenv\"\npull-filter ignore \"ifconfig-ipv6\"" > output
@@ -302,8 +343,13 @@ END {
 	close(output)
 	print "remote_count=" remotes > summary
 	print "auth_required=" (auth_required ? 1 : 0) > summary
-	print "client_certificate=" (blocks["cert"] ? 1 : 0) > summary
+	print "client_certificate=" (blocks["cert"] || external["cert"] ? 1 : 0) > summary
 	print "peer_verification=" (pins ? "fingerprint" : "ca") > summary
+	if (local_address != "") {
+		print "ifconfig_local=" local_address > summary
+		print "ifconfig_peer=" peer_address > summary
+		print "topology=" (topology == "" ? "net30" : topology) > summary
+	}
 	print "removed_routes=" (removed_routes + 0) > summary
 	print "removed_dns=" (removed_dns + 0) > summary
 	print "replaced_filters=" (replaced_filters + 0) > summary

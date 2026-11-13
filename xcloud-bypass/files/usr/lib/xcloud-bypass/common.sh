@@ -15,3 +15,6 @@ readonly XCB_CONFIG_OVERRIDE_DIR='/var/run/uci'
 readonly XCB_MAX_SNAPSHOT_BYTES=131072
 readonly XCB_MAX_STATE_BYTES=2097152
 readonly XCB_MAX_RESOURCES=64
+readonly XCB_LEASE_FILE='/tmp/dhcp.leases'
+readonly XCB_SYS_CLASS_NET='/sys/class/net'
+readonly XCB_OPENVPN_DIR='/etc/openvpn'
