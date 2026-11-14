@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+
+. /usr/lib/xcloud-bypass/common.sh
+. "$XCB_LIBRARY_DIR/validate.sh"
+. "$XCB_LIBRARY_DIR/private.sh"
+. "$XCB_LIBRARY_DIR/state.sh"
+
+[ "$#" -eq 0 ] && [ "$(id -u)" -eq 0 ] || exit 1
+[ -e "$XCB_PRIVATE_DIR/confirmed" ] || exit 0
+umask 077
+runtime=$(xcb_runtime_directory) || exit 1
+xcb_state_mark "$runtime/event" 1

@@ -171,7 +171,7 @@ xcb_tx_arm() (
 	xcb_state_mark "$tx/deadline" "$((now + XCB_CONFIRM_SECONDS))" || exit 1
 	xcb_state_mark "$tx/state" armed || exit 1
 	sync || exit 1
-	setsid /bin/sh "$XCB_LIBRARY_DIR/recovery-watch" "$1" 9>&- </dev/null >/dev/null 2>&1 &
+	setsid /bin/sh "$XCB_LIBRARY_DIR/recovery-watch" "$1" 8>&- 9>&- </dev/null >/dev/null 2>&1 &
 	attempt=0
 	while [ "$attempt" -lt 3 ]; do
 		if [ -f "$runtime/watch.$1" ]; then
@@ -234,6 +234,12 @@ xcb_tx_rollback() (
 	[ "$#" -eq 1 ] && xcb_tx_pending "$1" || exit 1
 	conflict=0
 	xcb_state_mark "$tx/state" recovering || exit 1
+	if [ -e "$tx/lifecycle/pbr.intent" ] && [ ! -e "$tx/lifecycle/pbr.stopped" ]; then
+		type xcb_lifecycle_stop_pending >/dev/null 2>&1 && xcb_lifecycle_stop_pending "$1" || {
+			xcb_state_mark "$tx/state" runtime_recovery
+			exit 1
+		}
+	fi
 	# reverse the write order so dependent resources are removed first
 	for number in $(ls -1 "$tx/changes" | sort -r); do
 		case "$number" in [0-9][0-9]) ;; *) exit 1 ;; esac
@@ -253,9 +259,18 @@ xcb_tx_rollback() (
 		xcb_state_mark "$record/conflict" 1 || exit 1
 	done
 	if [ "$conflict" -ne 0 ]; then
+		if [ -e "$tx/lifecycle/intent" ] && type xcb_forward_restore >/dev/null 2>&1; then
+			xcb_forward_restore "$tx/lifecycle" || :
+		fi
 		xcb_state_mark "$tx/state" conflict || exit 1
 		printf '%s\n' 'Recovery left conflicting edits untouched. Review the private journal before retrying.' >&2
 		exit 2
+	fi
+	if [ -e "$tx/lifecycle/intent" ]; then
+		type xcb_lifecycle_restore >/dev/null 2>&1 && xcb_lifecycle_restore "$1" || {
+			xcb_state_mark "$tx/state" runtime_recovery
+			exit 1
+		}
 	fi
 	xcb_state_mark "$tx/state" rolled_back && sync || exit 1
 	rm -f -- "$XCB_PRIVATE_DIR/pending" "$runtime/watch.$1"

@@ -47,6 +47,12 @@ AI_CONTEXT.md
 /local/
 
 # Build output and temporary files
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 /build/
 /dist/
 /tmp/

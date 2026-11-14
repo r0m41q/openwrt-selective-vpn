@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+. /usr/lib/xcloud-bypass/load.sh
+xcb_lifecycle "$@"

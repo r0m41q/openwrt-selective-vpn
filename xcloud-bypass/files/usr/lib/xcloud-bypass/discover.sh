@@ -1,5 +1,9 @@
 #!/bin/sh
 
+xcb_ip() {
+	"$XCB_IP" "$@"
+}
+
 xcb_valid_netdev() (
 	[ "$#" -eq 1 ] || exit 1
 	case "$1" in ''|-*|*[!a-zA-Z0-9_.-]*) exit 1 ;; esac

@@ -14,7 +14,7 @@ define Package/xcloud-bypass
   TITLE:=Selective Xbox Cloud Gaming authentication routing
   URL:=https://github.com/r0m41q/openwrt-xcloud-bypass
   PKGARCH:=all
-  DEPENDS:=+pbr +openvpn-openssl +firewall4 +uci +ubus +jshn +jsonfilter +ip-full +nftables-json +flock +ss
+  DEPENDS:=+pbr +openvpn-openssl +firewall4 +uci +ubus +jshn +jsonfilter +ip-full +nftables-json +flock +ss +coreutils-timeout
 endef
 
 define Package/xcloud-bypass/description
@@ -38,6 +38,14 @@ define Package/xcloud-bypass/install
 	$(INSTALL_DATA) ./files/usr/lib/xcloud-bypass/*.sh $(1)/usr/lib/xcloud-bypass/
 	$(INSTALL_DATA) ./files/usr/lib/xcloud-bypass/*.awk $(1)/usr/lib/xcloud-bypass/
 	$(INSTALL_BIN) ./files/usr/lib/xcloud-bypass/recovery-watch $(1)/usr/lib/xcloud-bypass/
+	$(INSTALL_BIN) ./files/usr/lib/xcloud-bypass/control $(1)/usr/lib/xcloud-bypass/
+	$(INSTALL_BIN) ./files/usr/lib/xcloud-bypass/supervise $(1)/usr/lib/xcloud-bypass/
+	$(INSTALL_BIN) ./files/usr/lib/xcloud-bypass/signal-event $(1)/usr/lib/xcloud-bypass/
+	$(INSTALL_BIN) ./files/usr/lib/xcloud-bypass/service-run $(1)/usr/lib/xcloud-bypass/
+	$(INSTALL_DIR) $(1)/etc/init.d $(1)/etc/hotplug.d/iface $(1)/etc/hotplug.d/openvpn
+	$(INSTALL_BIN) ./files/etc/init.d/xcloud-bypass $(1)/etc/init.d/xcloud-bypass
+	$(INSTALL_DATA) ./files/etc/hotplug.d/iface/95-xcloud-bypass $(1)/etc/hotplug.d/iface/
+	$(INSTALL_DATA) ./files/etc/hotplug.d/openvpn/95-xcloud-bypass $(1)/etc/hotplug.d/openvpn/
 endef
 
 $(eval $(call BuildPackage,xcloud-bypass))

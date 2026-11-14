@@ -227,9 +227,10 @@ xcb_policy_prepare() (
 	trap - EXIT
 )
 
-xcb_policy_enqueue() (
-	[ "$#" -eq 2 ] && [ "$(id -u)" -eq 0 ] && xcb_state_id "$1" && xcb_private_directory "$2" || exit 1
-	id=$1 work=$2
+xcb_policy_recheck() (
+	[ "$#" -eq 1 ] && xcb_private_directory "$1" || exit 1
+	umask 077
+	work=$1
 	xcb_private_directory "$work/resources" && xcb_private_file "$work/pbr.source" &&
 		xcb_config_file "$XCB_CONFIG_DIR/pbr" && xcb_uci_clean pbr && cmp -s "$work/pbr.source" "$XCB_CONFIG_DIR/pbr" || {
 		xcb_state_error 'PBR configuration changed. Prepare it again.'; exit 1;
@@ -240,6 +241,12 @@ xcb_policy_enqueue() (
 		instance=$(xcb_table_get "$work/pbr.table" config resolver_instance) || exit 1
 		xcb_dns_check "$work" "$instance" || exit 1
 	fi
+)
+
+xcb_policy_enqueue() (
+	[ "$#" -eq 2 ] && [ "$(id -u)" -eq 0 ] && xcb_state_id "$1" && xcb_private_directory "$2" || exit 1
+	id=$1 work=$2
+	xcb_policy_recheck "$work" || exit 1
 	for resource in "$work/resources/"*; do
 		[ -e "$resource" ] || continue
 		xcb_private_file "$resource" || exit 1

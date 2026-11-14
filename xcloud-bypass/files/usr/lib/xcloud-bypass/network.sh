@@ -118,6 +118,7 @@ xcb_network_prepare() (
 		}
 		LC_ALL=C awk 'length($0) < 1 || length($0) > 127 || /[\r\t]/ { bad = 1 }
 			END { exit (bad || NR != 2) }' "$XCB_PROFILE_DIR/$selection/credentials" || exit 1
+		sha256sum "$XCB_PROFILE_DIR/$selection/credentials" > "$work/credentials.sha256" || exit 1
 	fi
 	# all configured clients count, including disabled clients that may start later
 	awk -F '\t' '$1 == "S" && $3 == "openvpn" { print $4 }' "$work/openvpn.table" > "$work/clients"
@@ -143,7 +144,14 @@ xcb_network_prepare() (
 		[ "$other_dev" != "$tun" ] || { xcb_state_error 'A standalone OpenVPN profile uses the selected TUN device.'; exit 1; }
 	done
 	for name in sources leases lan_networks lan_subnets lan_zones; do : > "$work/$name"; done
+	owned_zone=0
+	if [ -e "$XCB_PRIVATE_DIR/confirmed" ]; then
+		confirmed=$(xcb_tx_pointer confirmed) && xcb_tx_load "$confirmed" || exit 1
+		key=$(xcb_tx_key section firewall.xcloud_zone) || exit 1
+		if [ -f "$tx/manifest/$key/applied" ] && [ "$(head -n 1 "$tx/manifest/$key/applied")" = present ]; then owned_zone=1; fi
+	fi
 	LC_ALL=C awk -v out="$work" -v mode="$mode" -v client="$client" -v tun="$tun" \
+		-v owned_zone="$owned_zone" \
 		-v profile="$profile" -v networks="$networks" -v devices="$devices" -v leasefile="$XCB_LEASE_FILE" \
 		-f "$XCB_LIBRARY_DIR/network.awk" "$work/"*.table "$work/live" "$work/leases.raw" "$work/vpn.summary" || exit 1
 	for name in sources leases lan_networks lan_subnets lan_zones; do
@@ -171,9 +179,10 @@ xcb_network_prepare() (
 	trap - EXIT
 )
 
-xcb_network_enqueue() (
-	[ "$#" -eq 2 ] && [ "$(id -u)" -eq 0 ] && xcb_state_id "$1" && xcb_private_directory "$2" || exit 1
-	id=$1 plan=$2
+xcb_network_recheck() (
+	[ "$#" -eq 1 ] && xcb_private_directory "$1" || exit 1
+	umask 077
+	plan=$1
 	xcb_private_directory "$plan/resources" || exit 1
 	for package in network firewall openvpn dhcp; do
 		xcb_private_file "$plan/$package.source" && xcb_config_file "$XCB_CONFIG_DIR/$package" &&
@@ -183,6 +192,17 @@ xcb_network_enqueue() (
 	done
 	profile=$(xcb_state_read "$plan/profile_path") && xcb_config_file "$profile" || exit 1
 	cmp -s "$profile" "$plan/profile.source" || exit 1
+	if [ -e "$plan/credentials.sha256" ]; then
+		xcb_private_file "$plan/credentials.sha256" && xcb_private_file "${profile%/*}/credentials" || exit 1
+		sha256sum "${profile%/*}/credentials" > "$plan/credentials.current" || exit 1
+		cmp -s "$plan/credentials.sha256" "$plan/credentials.current" || exit 1
+	fi
+)
+
+xcb_network_enqueue() (
+	[ "$#" -eq 2 ] && [ "$(id -u)" -eq 0 ] && xcb_state_id "$1" && xcb_private_directory "$2" || exit 1
+	id=$1 plan=$2
+	xcb_network_recheck "$plan" || exit 1
 	for resource in "$plan/resources/"*; do
 		[ -e "$resource" ] || continue
 		xcb_private_file "$resource" || exit 1
@@ -195,24 +215,34 @@ xcb_vpn_attach() (
 	[ "$#" -eq 3 ] && [ "$(id -u)" -eq 0 ] || exit 1
 	id=$1 logical=$2 tun=$3
 	[ "$logical" = xcloud_vpn ] && xcb_valid_netdev "$tun" && xcb_tx_pending "$id" || exit 1
-	[ "$(xcb_state_read "$tx/state")" = applied ] || exit 1
-	xcb_tx_expired && exit 1
+	state=$(xcb_state_read "$tx/state") || exit 1
+	case "$state" in applied|awaiting_confirmation) xcb_tx_expired && exit 1 ;; recovering|runtime_recovery) ;; *) exit 1 ;; esac
 	key=$(xcb_tx_key section network.xcloud_vpn) || exit 1
 	xcb_private_file "$tx/manifest/$key/applied" || exit 1
 	printf "present\nconfig interface 'xcloud_vpn'\n\toption proto 'none'\n\toption auto '1'\n" > "$tx/work/attach.expected" || exit 1
-	cmp -s "$tx/manifest/$key/applied" "$tx/work/attach.expected" || exit 1
+	case "$state" in
+		applied|awaiting_confirmation) cmp -s "$tx/manifest/$key/applied" "$tx/work/attach.expected" || exit 1 ;;
+		recovering|runtime_recovery)
+			found=0
+			for record in "$tx/changes/"*; do
+				[ -e "$record" ] || continue
+				[ "$(xcb_state_read "$record/target")" = network.xcloud_vpn ] || continue
+				cmp -s "$record/original" "$tx/work/attach.expected" && found=1
+			done
+			[ "$found" = 1 ] || cmp -s "$tx/manifest/$key/applied" "$tx/work/attach.expected" || exit 1 ;;
+	esac
 	xcb_resource_read section network.xcloud_vpn "$tx/work/attach.current" "$tx/work" || exit 1
 	cmp -s "$tx/work/attach.current" "$tx/work/attach.expected" || exit 1
 	flags=$(cat "$XCB_SYS_CLASS_NET/$tun/tun_flags" 2>/dev/null) || exit 1
 	case "$flags" in 0x[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]) ;; *) exit 1 ;; esac
 	[ "$((flags & 3))" -eq 1 ] || exit 1
-	before=$(ip -4 -o address show dev "$tun" scope global) || exit 1
+	before=$(xcb_ip -4 -o address show dev "$tun" scope global) || exit 1
 	[ -n "$before" ] || exit 1
-	ip -o link show dev "$tun" | grep -Eq '<([^>]*,)?UP(,|>)' || exit 1
+	xcb_ip -o link show dev "$tun" | grep -Eq '<([^>]*,)?UP(,|>)' || exit 1
 	# the external flag keeps netifd from flushing OpenVPN's address
 	ubus -t 5 call "network.interface.$logical" add_device \
 		"{\"name\":\"$tun\",\"link-ext\":true}" >/dev/null 2>&1 || exit 1
-	after=$(ip -4 -o address show dev "$tun" scope global) || exit 1
+	after=$(xcb_ip -4 -o address show dev "$tun" scope global) || exit 1
 	[ "$before" = "$after" ] || {
 		xcb_state_error 'The VPN address changed during external attachment.'; exit 1;
 	}

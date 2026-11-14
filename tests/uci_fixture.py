@@ -8,7 +8,9 @@ def quote(value):
 
 
 def export(path):
-    lexer = shlex.shlex(Path(path).read_text(), posix=True, punctuation_chars="\n")
+    lexer = shlex.shlex(
+        Path(path).read_text(), posix=True, punctuation_chars="\n"
+    )
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
     commands = []
@@ -31,8 +33,18 @@ def export(path):
             name = " " + quote(command[2]) if len(command) == 3 else ""
             lines.append("config " + command[1] + name + "\n")
             section = True
-        elif command[0] in ("option", "list") and len(command) == 3 and section:
-            lines.append("\t" + command[0] + " " + command[1] + " " + quote(command[2]) + "\n")
+        elif (
+            command[0] in ("option", "list") and len(command) == 3 and section
+        ):
+            lines.append(
+                "\t"
+                + command[0]
+                + " "
+                + command[1]
+                + " "
+                + quote(command[2])
+                + "\n"
+            )
         else:
             raise ValueError("invalid fixture input")
     return "package fixture\n\n" + "".join(lines)

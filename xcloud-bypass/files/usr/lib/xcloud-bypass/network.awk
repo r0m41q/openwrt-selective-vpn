@@ -211,22 +211,23 @@ END {
 	}
 	if (vpn_zone == "") {
 		vpn_zone = "xcloud_vpn"
-		if (vpn_zone in zone_section) fail("The reserved VPN zone name is already used.")
+		if ((vpn_zone in zone_section) && !(owned_zone && name["firewall",zone_section[vpn_zone]] == "xcloud_zone")) fail("The reserved VPN zone name is already used.")
 		resource("firewall.xcloud_zone", section("zone","xcloud_zone") field("name",vpn_zone) list("network",logical) field("input","REJECT") field("output","ACCEPT") field("forward","REJECT") field("family","ipv4") field("masq","1") field("mtu_fix","1"))
 	} else {
 		s = zone_section[vpn_zone]
 		if (mode == "managed" && vpn_zone != "xcloud_vpn") fail("The imported VPN device already matches an external firewall zone.")
 		if (!s || (vpn_zone in lan_zones) || v["firewall",s,"input"] !~ /^(REJECT|DROP)$/ || v["firewall",s,"output"] != "ACCEPT" || v["firewall",s,"forward"] !~ /^(REJECT|DROP)$/ || v["firewall",s,"masq"] != "1" || v["firewall",s,"masq_src"] != "" || v["firewall",s,"masq_dest"] != "" || v["firewall",s,"family"] ~ /6/) fail("The existing VPN firewall zone needs manual review.")
+		if (name["firewall",s] == "xcloud_zone") resource("firewall.xcloud_zone", section("zone","xcloud_zone") field("name",vpn_zone) list("network",logical) field("input","REJECT") field("output","ACCEPT") field("forward","REJECT") field("family","ipv4") field("masq","1") field("mtu_fix","1"))
 	}
 	for (z in lan_zones) {
 		print z > (out "/lan_zones")
-		found = 0
+		found = 0; found_section = 0
 		for (s = 1; s <= count["firewall"]; s++) {
 			if (type["firewall",s] == "rule" && option("firewall",s,"enabled","1") != "0" && (v["firewall",s,"src"] == z || v["firewall",s,"src"] == "*") && (v["firewall",s,"dest"] == vpn_zone || v["firewall",s,"dest"] == "*") && v["firewall",s,"target"] ~ /^(DROP|REJECT)$/) fail("An existing firewall rule may block LAN to VPN traffic.")
-			if (type["firewall",s] == "forwarding" && option("firewall",s,"enabled","1") != "0" && v["firewall",s,"src"] == z && v["firewall",s,"dest"] == vpn_zone) found++
+			if (type["firewall",s] == "forwarding" && option("firewall",s,"enabled","1") != "0" && v["firewall",s,"src"] == z && v["firewall",s,"dest"] == vpn_zone) { found++; found_section=s }
 		}
 		if (found > 1) fail("Duplicate LAN to VPN forwarding exists.")
-		if (!found) {
+		if (!found || name["firewall",found_section] == "xcloud_fwd_" z) {
 			if (length(z) > 40) fail("The LAN zone name is too long.")
 			n = "xcloud_fwd_" z
 			resource("firewall." n, section("forwarding",n) field("src",z) field("dest",vpn_zone) field("family","ipv4"))

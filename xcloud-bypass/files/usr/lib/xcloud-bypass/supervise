@@ -1,0 +1,31 @@
+#!/bin/sh
+set -eu
+
+. /usr/lib/xcloud-bypass/load.sh
+[ "$#" -eq 0 ] && [ "$(id -u)" -eq 0 ] || exit 1
+umask 077
+runtime=$(xcb_runtime_directory) || exit 1
+
+# retry recovery before processing network events
+while ! xcb_lifecycle boot >/dev/null 2>&1; do sleep 3; done
+xcb_state_mark "$runtime/event" 1 || exit 1
+poll=0
+
+while :; do
+	if [ -e "$XCB_PRIVATE_DIR/pending" ]; then
+		identifier=$(xcb_tx_pointer pending) || exit 1
+		xcb_lifecycle tick "$identifier" >/dev/null 2>&1 || :
+	elif [ -e "$runtime/event" ]; then
+		xcb_private_file "$runtime/event" || exit 1
+		rm -f -- "$runtime/event"
+		# coalesce events from the same network reload
+		sleep 2
+		xcb_lifecycle event >/dev/null 2>&1 || :
+	fi
+	sleep 1
+	poll=$((poll + 1))
+	if [ "$poll" -ge 30 ]; then
+		poll=0
+		xcb_state_mark "$runtime/event" 1 || exit 1
+	fi
+done

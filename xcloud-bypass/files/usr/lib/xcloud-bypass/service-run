@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+. /usr/lib/xcloud-bypass/common.sh
+case "$*" in
+	'openvpn start xcloud_client'|'openvpn stop xcloud_client'|'pbr reload'|'pbr stop'|'pbr running'|'pbr version'|'firewall reload') ;;
+	*) exit 1 ;;
+esac
+
+# the timer survives the request and kills the whole service call group
+(
+	exec 8>&- 9>&-
+	sleep 15
+	kill -KILL -"$$"
+) &
+timer=$!
+trap 'kill "$timer" 2>/dev/null || :' EXIT
+service=$1; shift
+"$XCB_INIT_DIR/$service" "$@"
