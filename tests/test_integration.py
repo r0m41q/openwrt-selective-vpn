@@ -3,6 +3,7 @@ from pathlib import Path
 import stat
 import subprocess
 import tempfile
+import time
 import unittest
 
 import test_lifecycle
@@ -59,7 +60,13 @@ class IntegrationTests(unittest.TestCase):
         case.call("confirm", reconnect)
         case.n.live[0]["ipv4-address"][0]["address"] = "192.168.9.1"
         case.n.save_live()
-        event = case.call("event").stdout.decode().strip()
+        for _ in range(3):
+            result = case.call("event", check=False)
+            if result.returncode == 0 or (case.f.store / "pending").exists():
+                break
+            time.sleep(1)
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        event = result.stdout.decode().strip()
         self.assertIn("192.168.9.0/24", pbr.read_text())
         self.assertEqual((case.f.store / "pending").read_text().strip(), event)
         case.call("recover")
