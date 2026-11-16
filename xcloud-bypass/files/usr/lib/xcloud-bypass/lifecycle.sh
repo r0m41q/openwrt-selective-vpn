@@ -108,6 +108,15 @@ xcb_life_obsolete() (
 		}
 		case "$mode:$kind:$target" in
 			apply:option:*|apply:section:xcloud-bypass.*) continue ;;
+			*:option:pbr.config.supported_interface)
+				logical=$(xcb_state_read "$tx/lifecycle/after.interface") || exit 1
+				[ -n "$logical" ] || logical=$(xcb_state_read "$tx/lifecycle/before.interface") || exit 1
+				[ -n "$logical" ] || continue
+				xcb_valid_interface "$logical" || exit 1
+				if awk -F '\t' -v logical="$logical" '$1=="S" { own[$2]=($4 ~ /^xcloud_(console|browser|custom)$/) }
+					$1=="V" && $3=="interface" && $4==logical && !own[$2] { found=1 }
+					END { exit !found }' "$work/pbr.table"; then continue; fi
+				xcb_state_mark "$work/restore_supported" 1 || exit 1 ;;
 			*:option:pbr.*)
 				# keep shared PBR settings when other policies may depend on them
 				if awk -F '\t' '$1=="S" && $3 ~ /^(policy|dns_policy|include)$/ && $4 !~ /^xcloud_(console|browser|custom)$/ { found=1 }
@@ -286,6 +295,7 @@ xcb_life_finish() (
 		for resource in "$work/wanted/option.pbr."*; do
 			[ -e "$resource" ] || continue
 			target=${resource##*/option.}
+			if [ "$target" = pbr.config.supported_interface ] && [ -e "$work/restore_supported" ]; then continue; fi
 			xcb_resource_read option "$target" "$work/current" "$work" || exit 1
 			cp "$work/current" "$resource" || exit 1
 		done
