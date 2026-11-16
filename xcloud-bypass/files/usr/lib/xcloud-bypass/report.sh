@@ -119,6 +119,7 @@ xcb_report_collect() {
 	xcb_report_routes
 	xcb_report_pbr
 	xcb_report_dns_capability
+	if [ "$report" = status ]; then xcb_report_details; fi
 	if [ -n "${report_meta:-}" ]; then
 		xcb_report_identity && {
 			xcb_report_vpn
@@ -207,6 +208,25 @@ xcb_report_identity() {
 	xcb_valid_identifier "$client" && xcb_valid_netdev "$tun" && xcb_valid_interface "$logical"
 }
 
+xcb_report_details() {
+	[ -f "$report_work/pbr.table" ] || return 0
+	for name in console browser custom; do
+		[ "$(xcb_table_get "$report_work/pbr.table" "xcloud_$name" enabled)" = 1 ] || continue
+		sources=$(xcb_table_get "$report_work/pbr.table" "xcloud_$name" src_addr) || continue
+		destinations=$(xcb_table_get "$report_work/pbr.table" "xcloud_$name" dest_addr) || continue
+		sources=$(xcb_normalize_list destination "$sources") &&
+			destinations=$(xcb_policy_destinations "$destinations") || continue
+		[ -n "$sources" ] && [ -n "$destinations" ] || continue
+		valid=1
+		for source in $sources; do
+			xcb_valid_ipv4 "$source" || { xcb_valid_subnet "$source" && [ "${source##*/}" -gt 0 ]; } || valid=0
+		done
+		[ "$valid" = 1 ] || continue
+		xcb_report_set "details.${name}_sources" "$(printf '%s' "$sources" | tr '\n' ' ')"
+		xcb_report_set "details.${name}_destinations" "$(printf '%s' "$destinations" | tr '\n' ' ')"
+	done
+}
+
 xcb_report_routes() {
 	for family in 4 6; do
 		case "$family" in 4) field=main_ipv4_default ;; 6) field=ipv6_default ;; esac
@@ -219,6 +239,7 @@ xcb_report_routes() {
 
 xcb_report_vpn() {
 	[ -n "$client" ] || return 0
+	if [ "$report" = status ]; then xcb_report_set details.interface "$tun"; fi
 	process=unknown ipv4=unknown
 	if xcb_report_capture "$report_work/vpn.json" ubus -t 3 call service list '{"name":"openvpn"}'; then
 		running=$(xcb_json_field "$report_work/vpn.json" "@.openvpn.instances.$client.running") || running=''
@@ -249,6 +270,10 @@ xcb_report_vpn() {
 		done
 		ipv4=$value
 		xcb_report_set vpn.ipv4 "$ipv4"
+		if [ "$report" = status ] && [ "$ipv4" = usable ]; then
+			addresses=$(xcb_normalize_list destination "$addresses") || addresses=''
+			xcb_report_set details.addresses "$(printf '%s' "$addresses" | tr '\n' ' ')"
+		fi
 	fi
 	flags=$(cat "$XCB_SYS_CLASS_NET/$tun/tun_flags") || flags=''
 	case "$flags" in 0x[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]) ;; *) flags=0 ;; esac

@@ -5,6 +5,12 @@
 		"action": { "type": "firstchild" },
 		"depends": { "acl": [ "luci-app-xcloud-bypass" ] }
 	},
+	"admin/services/xcloud-bypass/overview": {
+		"title": "Overview",
+		"order": 1,
+		"action": { "type": "view", "path": "xcloud-bypass/overview" },
+		"depends": { "acl": [ "luci-app-xcloud-bypass" ] }
+	},
 	"admin/services/xcloud-bypass/vpn": {
 		"title": "VPN",
 		"order": 10,
@@ -15,6 +21,12 @@
 		"title": "Routing",
 		"order": 20,
 		"action": { "type": "view", "path": "xcloud-bypass/routing" },
+		"depends": { "acl": [ "luci-app-xcloud-bypass" ] }
+	},
+	"admin/services/xcloud-bypass/diagnostics": {
+		"title": "Diagnostics",
+		"order": 30,
+		"action": { "type": "view", "path": "xcloud-bypass/diagnostics" },
 		"depends": { "acl": [ "luci-app-xcloud-bypass" ] }
 	}
 }

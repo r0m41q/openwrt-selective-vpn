@@ -145,10 +145,32 @@ class ReportTests(unittest.TestCase):
         self.assertTrue(value["firewall"]["masquerading"])
         self.assertTrue(value["firewall"]["input_restricted"])
         self.assertEqual(before, self.snapshot())
-        added = (self.root / "calls").read_text().splitlines()[len(calls) :]
+        added = (self.root / "calls").read_text().splitlines()[len(calls):]
         self.assertTrue(
             all(c in ("pbr version", "pbr running") for c in added)
         )
+
+    def test_overview_details_are_validated_and_excluded_from_doctor(self):
+        self.lifecycle.activate()
+        value = self.report()
+        self.assertEqual(value["details"]["interface"], "tun_xc0")
+        self.assertTrue(value["details"]["addresses"])
+        self.assertEqual(value["details"]["console_sources"], "192.168.8.0/24")
+        self.assertEqual(
+            set(value["details"]["console_destinations"].split()),
+            {"20.201.200.49", "51.12.31.0"},
+        )
+        self.assertEqual(value["details"]["browser_destinations"], "")
+        self.assertNotIn("details", self.report("doctor"))
+        path = self.f.config / "pbr"
+        self.write(
+            path,
+            path.read_text().replace("192.168.8.0/24", "0.0.0.0/0"),
+            0o644,
+        )
+        value = self.report()
+        self.assertEqual(value["details"]["console_sources"], "")
+        self.assertEqual(value["pbr"]["policy_configuration"], "changed")
 
     def test_degraded_checks_remain_separate(self):
         self.lifecycle.activate()

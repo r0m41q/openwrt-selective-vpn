@@ -125,6 +125,19 @@ class RpcTests(unittest.TestCase):
         (self.stage / "peer").write_text("not-an-address")
         self.assertNotEqual(self.run_bridge("reconnect").returncode, 0)
 
+    def test_recovery_controls_validate_peer_and_use_lifecycle(self):
+        self.field("peer", "192.168.1.2")
+        for operation in ("enable", "disable", "rollback"):
+            with self.subTest(operation=operation):
+                self.assertEqual(self.run_bridge(operation).returncode, 0)
+                self.assertEqual(
+                    (self.root / "lifecycle").read_text().splitlines(),
+                    [operation, "192.168.1.2"],
+                )
+                (self.stage / "peer").write_text("$(id)")
+                self.assertNotEqual(self.run_bridge(operation).returncode, 0)
+                (self.stage / "peer").write_text("192.168.1.2")
+
     def test_unknown_operation_and_stage_are_rejected(self):
         self.assertNotEqual(self.run_bridge("execute").returncode, 0)
         self.assertNotEqual(

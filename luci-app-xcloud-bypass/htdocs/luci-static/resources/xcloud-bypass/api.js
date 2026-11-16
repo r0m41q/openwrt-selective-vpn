@@ -3,10 +3,10 @@
 'require rpc';
 
 const parameters = {
-	settings: [], clients: [], profiles: [], leases: [], status: [], pending: [],
+	settings: [], clients: [], profiles: [], leases: [], status: [], doctor: [], pending: [],
 	profile_summary: ['id'], import_profile: ['profile'],
 	set_credentials: ['id', 'username', 'password'],
-	reconnect: ['peer'], confirm: ['id']
+	reconnect: ['peer'], enable: ['peer'], disable: ['peer'], rollback: ['peer'], confirm: ['id']
 };
 parameters.preview = ['mode', 'selection', 'networks', 'devices', 'console', 'browser', 'fallback', 'custom', 'ack', 'peer', 'scope'];
 parameters.apply = parameters.preview.concat('review');
@@ -64,7 +64,7 @@ return baseclass.extend({
 			if (!object(state) || state.ok !== true)
 				throw new Error(_('The operation result is unavailable. Refresh status before retrying.'));
 			if (state.state === 'complete') {
-				if (!object(state.result) || (name === 'status' ? state.result.schema !== 1 : state.result.ok !== true)) {
+				if (!object(state.result) || (['status', 'doctor'].includes(name) ? state.result.schema !== 1 : state.result.ok !== true)) {
 					if (object(state.result) && Object.prototype.hasOwnProperty.call(failures, state.result.code))
 						throw new Error(failures[state.result.code]);
 					throw new Error(_('The operation failed. Check diagnostics over SSH.'));

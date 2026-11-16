@@ -40,6 +40,8 @@ function list(value, valid, message) {
 
 return baseclass.extend({
 	ipv4: ipv4,
+	subnet: subnet,
+	destination: destination,
 
 	options: function(form, vpn) {
 		if (!vpn || typeof vpn.selection !== 'string' || !(

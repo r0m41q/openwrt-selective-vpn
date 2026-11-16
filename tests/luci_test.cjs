@@ -430,3 +430,256 @@ test('readonly and unavailable recovery status disable routing mutations', () =>
 		assert.equal(f.view.confirmButton.disabled, true);
 	}
 });
+
+function reportLogic() {
+	return load('xcloud-bypass/report.js', { baseclass: { extend: value => value }, routing: routingLogic() });
+}
+
+function statusReport(changes = {}) {
+	return {
+		schema: 1, report: 'status', collection: { state: 'complete' },
+		configuration: { enabled: true, console: true, browser: false, pending_uci: 'absent', owned_settings: 'match' },
+		recovery: { state: 'confirmed', supervisor: 'running' }, vpn: { tunnel: 'ready', process: 'running', ipv4: 'usable', logical_interface: 'attached' },
+		routing: { main_ipv4_default: 'present', vpn_default: 'present', mark_rule: 'present' },
+		pbr: { service: 'running', version: 'supported', errors: 'absent', policy_configuration: 'match' },
+		dns: { integration: 'ready', nftset_capability: 'supported', sets: 1, population: 'empty' },
+		evidence: { tunnel: 'observed', policy_rules: 'observed', policy_matches: 'unverified' },
+		policies: { console: 'present' }, packets: { console: 0 }, bytes: { console: 0 },
+		details: { interface: 'tun_xc0', addresses: '10.8.0.2/24', console_sources: '192.168.8.0/24', console_destinations: 'xsts.auth.xboxlive.com' },
+		...changes
+	};
+}
+
+function textContent(node) {
+	return typeof node === 'object' ? [node.textContent || '', ...(node.children || []).map(textContent)].join(' ') : String(node);
+}
+
+function monitorFixture(handler, options = {}) {
+	const calls = [], events = {}, documentEvents = {}, timers = new Map(), downloads = [];
+	let now = 0, sequence = 0;
+	const doc = { hidden: false, addEventListener: (name, fn) => { documentEvents[name] = fn; } };
+	const pending = { ok: true, id: '' };
+	const settings = { enabled: '1', mode: 'managed' };
+	const view = load('xcloud-bypass/monitor.js', {
+		view: { extend: value => value }, report: reportLogic(), routing: routingLogic(),
+		Date: { now: () => now }, document: doc,
+		L: { hasViewPermission: () => options.writable !== false, url: (...parts) => '/' + parts.join('/') },
+		window: {
+			addEventListener: (name, fn) => { events[name] = fn; },
+			setTimeout: (fn, delay) => { timers.set(++sequence, { fn, delay }); return sequence; },
+			clearTimeout: id => timers.delete(id)
+		},
+		E: (tag, attributes, children) => {
+			const node = new Element(tag, attributes, children);
+			if (tag === 'a') node.click = () => downloads.push(node.attributes);
+			return node;
+		},
+		api: { call: async (...args) => {
+			calls.push(args);
+			if (handler) return handler(...args);
+			return args[0] === 'status' ? statusReport() : args[0] === 'settings' ? settings : pending;
+		} }
+	});
+	view.diagnostic = options.diagnostic === true;
+	const data = Object.prototype.hasOwnProperty.call(options, 'data') ? options.data : [statusReport(), settings, pending];
+	const root = view.render(view.diagnostic ? null : data);
+	view.peer.value = '192.168.8.2';
+	return { view, root, calls, events, timers, document: doc, documentEvents, downloads,
+		advance: ms => { now += ms; view.tick(); },
+		fire: delay => {
+			const entry = [...timers].find(([, timer]) => timer.delay === delay);
+			assert.ok(entry, 'expected timer'); timers.delete(entry[0]); return entry[1].fn();
+		} };
+}
+
+test('doctor jobs accept report schemas and recovery calls keep their narrow arguments', async () => {
+	const f = apiFixture(method => method === 'job' ? { ok: true, state: 'complete', result: { schema: 1, report: 'doctor' } } : { ok: true, job: '1' });
+	assert.equal((await f.api.call('doctor')).report, 'doctor');
+	for (const operation of ['enable', 'disable', 'rollback']) {
+		const api = apiFixture(method => method === 'job' ? { ok: true, state: 'complete', result: { ok: true } } : { ok: true, job: '1' });
+		await api.api.call(operation, '192.168.8.2');
+		assert.deepEqual(Array.from(api.calls[0].options.params), ['peer']);
+		assert.deepEqual(api.calls[0].args, ['192.168.8.2']);
+	}
+});
+
+test('report cleaning drops secrets, raw logs, addresses and false gameplay claims', () => {
+	const raw = statusReport({ report: 'doctor', password: 'private-secret', logs: { raw: 'private-secret', authentication_failure: 2 },
+		evidence: { game_stream: 'observed', xbox_authentication: 'observed', exit_ip: '203.0.113.5' }, packets: { console: 'private-secret', browser: -1, custom: 1e15 } });
+	const value = reportLogic().clean(raw, 'doctor');
+	const encoded = JSON.stringify(value);
+	for (const secret of ['private-secret', '10.8.0.2', '192.168.8.0', 'xsts.auth', '203.0.113.5']) assert.ok(!encoded.includes(secret));
+	assert.equal(value.evidence.game_stream, 'unknown');
+	assert.equal(value.packets.console, null);
+	assert.equal(value.packets.browser, null);
+	assert.equal(value.packets.custom, null);
+	assert.equal(value.logs.authentication_failure, 2);
+	assert.throws(() => reportLogic().clean({ schema: 2 }, 'doctor'));
+});
+
+test('overview shows configured scope and separate tunnel, rule and traffic evidence', () => {
+	const f = monitorFixture();
+	const text = textContent(f.root);
+	for (const expected of ['tun_xc0', '10.8.0.2/24', '192.168.8.0/24', 'xsts.auth.xboxlive.com', 'Configured authentication domains: 1', 'IPv4 TCP/443', 'remain unverified']) assert.ok(text.includes(expected), expected);
+	assert.match(textContent(f.view.statusArea), /Present \/ 0 \/ 0/);
+	assert.equal(f.view.buttons.disable.disabled, false);
+	assert.equal(f.view.buttons.reconnect.disabled, false);
+	assert.equal(f.view.warnings.children.length, 0);
+	assert.ok(descendants(f.root).every(node => node.innerHTML === undefined));
+});
+
+test('disabled, degraded and busy reports do not imply a working connection', () => {
+	const settings = { enabled: '0', mode: 'external' };
+	const disabled = monitorFixture(null, { data: [statusReport({ configuration: { enabled: false } }), settings, { id: '' }] });
+	assert.equal(disabled.view.buttons.enable.disabled, false);
+	assert.equal(disabled.view.buttons.reconnect.disabled, true);
+	assert.equal(disabled.view.buttons.disable.disabled, true);
+	const degraded = monitorFixture(null, { data: [statusReport({ collection: { state: 'partial' }, vpn: { tunnel: 'not_ready' }, dns: { integration: 'not_ready' } }), { enabled: '1' }, { id: '' }] });
+	assert.match(textContent(degraded.view.warnings), /incomplete/);
+	assert.match(textContent(degraded.view.warnings), /prerequisites/);
+	assert.match(textContent(degraded.view.warnings), /Domain routing is not ready/);
+	const busy = monitorFixture(null, { data: [statusReport({ collection: { state: 'busy' } }), { enabled: '1' }, { id: '' }] });
+	assert.equal(busy.view.buttons.disable.disabled, true);
+});
+
+test('stale reports block new actions until refreshed', async () => {
+	const f = monitorFixture();
+	f.advance(61000);
+	assert.match(f.view.age.textContent, /Stale/);
+	assert.equal(f.view.buttons.disable.disabled, true);
+	await f.view.mutate(false);
+	assert.equal(f.calls.length, 0);
+	await f.view.refresh();
+	assert.equal(f.view.buttons.disable.disabled, false);
+	assert.match(f.view.age.textContent, /Seconds since/);
+});
+
+test('monitor polling is delayed, non-overlapping and paused on hidden pages or navigation', async () => {
+	let resolve;
+	const f = monitorFixture(method => method === 'status' ? new Promise(done => { resolve = done; }) : method === 'settings' ? { enabled: '1' } : { id: '' });
+	assert.equal([...f.timers.values()].filter(timer => timer.delay === 30000).length, 1);
+	const refresh = f.fire(30000);
+	await settle();
+	assert.equal(f.view.busy, true);
+	await f.view.refresh();
+	assert.equal(f.calls.filter(call => call[0] === 'status').length, 1);
+	assert.equal([...f.timers.values()].filter(timer => timer.delay === 30000).length, 0);
+	f.document.hidden = true; f.documentEvents.visibilitychange();
+	assert.equal(f.timers.size, 0);
+	resolve(statusReport()); await refresh;
+	assert.equal(f.timers.size, 0);
+	f.document.hidden = false; f.documentEvents.visibilitychange();
+	assert.equal(f.timers.size, 2);
+	f.events.pagehide();
+	assert.equal(f.timers.size, 0);
+	await f.view.refresh();
+	assert.equal(f.calls.filter(call => call[0] === 'status').length, 1);
+});
+
+test('refresh failures remove old readiness and pause automatic updates', async () => {
+	const f = monitorFixture(() => { throw new Error('private-secret'); });
+	await f.view.refresh();
+	assert.equal(f.view.cleaned, null);
+	assert.equal(f.view.statusArea.children.length, 0);
+	assert.equal(f.view.auto.checked, false);
+	assert.equal(f.view.buttons.disable.disabled, true);
+	assert.ok(!f.view.feedback.textContent.includes('private-secret'));
+	assert.equal([...f.timers.values()].filter(timer => timer.delay === 30000).length, 0);
+});
+
+test('read-only and missing recovery data block mutations while diagnostics remain readable', async () => {
+	for (const options of [{ writable: false }, { data: [null, null, null] }]) {
+		const f = monitorFixture(null, options);
+		for (const button of Object.values(f.view.buttons)) assert.equal(button.disabled, true);
+		assert.equal(f.view.confirmButton.disabled, true);
+		f.view.choose('disable'); await f.view.mutate(false);
+		assert.equal(f.calls.length, 0);
+	}
+	const f = monitorFixture(() => statusReport({ report: 'doctor' }), { writable: false, diagnostic: true });
+	await f.view.refresh();
+	assert.equal(f.view.downloadButton.disabled, false);
+});
+
+test('each recovery action requires an explicit choice, valid peer and confirmation', async () => {
+	for (const action of ['enable', 'reconnect', 'reload', 'disable', 'rollback']) {
+		const id = 'c'.repeat(32);
+		const f = monitorFixture(method => method === 'pending' ? { id, state: 'awaiting_confirmation', seconds_remaining: 60 } : { ok: true, id },
+			{ data: [statusReport(), { enabled: action === 'enable' ? '0' : '1', mode: 'managed' }, { id: '' }] });
+		f.view.choose(action);
+		assert.equal(f.calls.length, 0);
+		f.view.peer.value = 'bad-address'; await f.view.mutate(false);
+		assert.equal(f.calls.length, 0);
+		f.view.peer.value = '192.168.8.2'; await f.view.mutate(false);
+		assert.deepEqual(f.calls[0], [action === 'reload' ? 'enable' : action, '192.168.8.2']);
+		assert.equal(f.view.confirmButton.disabled, false);
+		assert.equal(f.view.buttons.disable.disabled, true);
+		await f.view.mutate(true);
+		assert.ok(f.calls.some(call => call[0] === 'confirm' && call[1] === id));
+	}
+});
+
+test('lost recovery responses are not retried and confirmation expires', async () => {
+	const id = 'c'.repeat(32);
+	const f = monitorFixture(method => {
+		if (method === 'disable') throw new Error('private-secret');
+		return { id, state: 'awaiting_confirmation', seconds_remaining: 2 };
+	});
+	f.view.choose('disable'); await f.view.mutate(false);
+	assert.equal(f.calls.filter(call => call[0] === 'disable').length, 1);
+	assert.equal(f.view.confirmButton.disabled, false);
+	assert.match(f.view.feedback.textContent, /has not been retried/);
+	assert.ok(!f.view.feedback.textContent.includes('private-secret'));
+	f.advance(3000); await f.view.mutate(true);
+	assert.equal(f.view.confirmButton.disabled, true);
+	assert.ok(!f.calls.some(call => call[0] === 'confirm'));
+});
+
+test('pending confirmation remains available when status collection is busy', async () => {
+	const id = 'd'.repeat(32);
+	const f = monitorFixture(() => ({ ok: true, id: '' }), { data: [statusReport({ collection: { state: 'busy' } }), { enabled: '1' }, { id, state: 'awaiting_confirmation', seconds_remaining: 60 }] });
+	assert.equal(f.view.confirmButton.disabled, false);
+	await f.view.mutate(true);
+	assert.deepEqual(f.calls[0], ['confirm', id]);
+	assert.equal(f.view.confirmButton.disabled, true);
+});
+
+test('diagnostics run on demand and download only the cleaned doctor report', async () => {
+	const f = monitorFixture(() => statusReport({ report: 'doctor', password: 'private-secret', logs: { raw: 'private-secret', tls_failure: 2 } }), { diagnostic: true });
+	assert.equal(f.calls.length, 0);
+	assert.equal(f.view.downloadButton.disabled, true);
+	assert.equal([...f.timers.values()].filter(timer => timer.delay === 30000).length, 0);
+	await f.view.refresh(); f.view.download();
+	assert.deepEqual(f.calls, [['doctor']]);
+	assert.equal(f.downloads.length, 1);
+	const downloaded = decodeURIComponent(f.downloads[0].href.split(',')[1]);
+	for (const secret of ['private-secret', '10.8.0.2', '192.168.8.0', 'xsts.auth']) assert.ok(!downloaded.includes(secret));
+	assert.equal(JSON.parse(downloaded).logs.tls_failure, 2);
+	assert.equal(f.downloads[0].download, 'xcloud-diagnostics.json');
+	f.advance(61000); f.view.download();
+	assert.equal(f.downloads.length, 1);
+});
+
+test('malformed overview details and recovery identifiers cannot become actionable evidence', () => {
+	const detail = reportLogic().details({ details: { interface: '<script>', addresses: '999.0.0.1/24',
+		console_sources: '0.0.0.0/0', console_destinations: '$(id)' } });
+	assert.equal(detail.interface, '');
+	assert.equal(detail.addresses.length, 0);
+	assert.equal(detail.policies[0].sources.length, 0);
+	assert.equal(detail.policies[0].destinations.length, 0);
+	for (const pending of [{ id: '../shadow' }, { id: 'e'.repeat(32), state: 'constructor' }]) {
+		const f = monitorFixture(null, { data: [statusReport(), { enabled: '1' }, pending] });
+		assert.equal(f.view.buttons.disable.disabled, true);
+		assert.equal(f.view.confirmButton.disabled, true);
+	}
+});
+
+test('the monitor reads lock-sharing RPCs in order', async () => {
+	let release;
+	const f = monitorFixture(method => method === 'status' ? new Promise(resolve => { release = resolve; }) :
+		method === 'settings' ? { enabled: '1' } : { id: '' });
+	const loading = f.view.load();
+	await settle();
+	assert.deepEqual(f.calls, [['status']]);
+	release(statusReport()); await loading;
+	assert.deepEqual(f.calls, [['status'], ['settings'], ['pending']]);
+});

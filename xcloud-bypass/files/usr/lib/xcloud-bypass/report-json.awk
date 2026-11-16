@@ -59,11 +59,21 @@ BEGIN {
 	field("logs.tls_failure", "number", "null")
 	field("logs.connection_failure", "number", "null")
 	field("logs.restart", "number", "null")
+	if (report == "status") {
+		field("details.interface", "interface", "")
+		field("details.addresses", "tokens", "")
+		for (i = 1; i <= 3; i++) {
+			field("details." policies[i] "_sources", "tokens", "")
+			field("details." policies[i] "_destinations", "tokens", "")
+		}
+	}
 }
 {
 	if (NF != 2 || !($1 in allowed)) { bad = 1; next }
 	if (allowed[$1] == "number") valid = ($2 == "null" || ($2 ~ /^(0|[1-9][0-9]*)$/ && length($2) <= 15))
 	else if (allowed[$1] == "bool") valid = ($2 ~ /^(true|false|null)$/)
+	else if (allowed[$1] == "interface") valid = ($2 == "" || ($2 ~ /^[a-zA-Z0-9_][a-zA-Z0-9_.-]*$/ && length($2) <= 15))
+	else if (allowed[$1] == "tokens") valid = (length($2) <= 4096 && $2 !~ /[^a-z0-9 .\/-]/)
 	else valid = ($2 ~ /^[a-z_]+$/ && index(" " allowed[$1] " ", " " $2 " ") > 0)
 	if (!valid) { bad = 1; next }
 	value[$1] = $2
