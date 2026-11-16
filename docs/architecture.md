@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the intended implementation. Router integration and Xbox launch behavior have not been tested by this project yet.
+This document describes the current development package design. Router integration and live routing have not been tested by this project yet. Package and resource names below still use the previous identity while the rename is in progress.
 
 ## Platform
 
@@ -12,12 +12,13 @@ The [25.12.6 feed manifest](https://downloads.openwrt.org/releases/25.12.6/targe
 
 ## Components and ownership
 
-Ship a core `xcloud-bypass` package and a `luci-app-xcloud-bypass` frontend. The CLI and RPC backend use the same validation, configuration, and recovery code. Shell and BusyBox utilities handle orchestration; ucode handles authenticated RPC. No separate web server or continuous polling daemon is needed.
+The current build has a core `xcloud-bypass` package and a `luci-app-xcloud-bypass` frontend. The CLI and RPC backend use the same validation, configuration, and recovery code. Shell and BusyBox utilities handle orchestration; ucode handles authenticated RPC. No separate web server or continuous polling daemon is needed.
 
 | Location | Purpose |
 | --- | --- |
 | `/etc/config/xcloud-bypass` | Non-secret settings; initially disabled |
-| `/usr/sbin/xcloud-bypass` | CLI and fixed backend operations |
+| `/usr/bin/xcloud-bypass` | CLI |
+| `/usr/lib/xcloud-bypass/control` | Fixed backend operations |
 | `/usr/lib/xcloud-bypass/` | Shared backend libraries |
 | `/etc/openvpn/xcloud-bypass/` | Imported profile and credentials; directory mode 700, files 600 |
 | `/etc/xcloud-bypass/` | Ownership journal and bounded recovery snapshots; private to root |
@@ -31,14 +32,7 @@ Core dependencies include `pbr`, `openvpn-openssl`, and their resolved networkin
 
 ## Traffic selection
 
-The user's experiment established that TCP/443 to `20.201.200.49` and `51.12.31.0` worked in one environment. DNS logs associated those addresses with the console domains below. Treat the domain equivalent as a hypothesis to validate and retain an optional static fallback labeled as potentially outdated.
-
-| Mode | Destinations | Default |
-| --- | --- | --- |
-| Console | `xsts.auth.xboxlive.com`, `xgpuconsole.gssv-play-prod.xboxlive.com` | On |
-| Browser | `xgpuweb.gssv-play-prod.xboxlive.com`, `xgpuwebf2p.gssv-play-prod.xboxlive.com` | Off |
-
-Generate separate console and browser policies with explicit `proto=tcp`, `dest_port=443`, `chain=prerouting`, and the chosen VPN interface. Custom destinations get separate owned policies. Never generate an unrestricted source policy.
+The current build has fixed TCP/443 policies for its built-in service destinations and a separate custom-destination policy. The new configuration will put custom domains, IPv4 addresses and CIDRs first, with validated protocol and port choices. The existing domain sets and static-IP fallback will move into an optional preset. Until that work is complete, preview the exact destination list before applying and do not describe the current build as protocol-independent.
 
 Discover eligible local networks from firewall membership and live netifd addresses. Default to the ordinary trusted LAN when it is unambiguous; ask for network selection during setup otherwise. Do not automatically include guest networks, VPN servers, or other zones. In all-LAN mode, generate source IPv4 CIDRs from those networks. In device mode, resolve DHCP names to current IPv4 addresses and require every selected address to belong to an eligible network. Empty optional device input means all eligible LAN clients. Reject ambiguous names and overlapping address space across eligible and excluded networks.
 
@@ -46,15 +40,15 @@ Prerouting keeps router-originated connections outside these policies. Source IP
 
 PBR owns route tables, packet marks, nftsets, and resolver snippets. The application does not create a parallel routing ruleset or flush conntrack globally. Existing connections may need to reconnect after a policy change.
 
-Better xCloud's [login interceptor](https://github.com/redphx/better-xcloud/blob/typescript/src/utils/xcloud-interceptor.ts) sets `X-Forwarded-For` in the browser. This application changes the public source IP through VPN routing. It performs no HTTPS interception or header modification. Microsoft may change its checks, and shared destination IPs can also match unrelated HTTPS traffic. Direct gameplay streaming requires observed flow evidence.
+This application changes a connection's public source IP through VPN routing. It performs no HTTPS interception or header modification. Shared destination IPs can also match unrelated traffic. A policy counter is not proof of a completed client connection.
 
 ## DNS and IPv6
 
 Use `resolver_set=dnsmasq.nftset` and verify an actual `nftset` compile feature, not just the package name. The [dnsmasq build recipe](https://github.com/openwrt/openwrt/blob/openwrt-25.12/package/network/services/dnsmasq/Makefile) makes that feature configurable even in the full variant. Preserve resolver instance selection and existing shared PBR settings unless the user accepts a proposed change.
 
-Domain routing needs client DNS answers to pass through the integrated resolver. Verify the active DNS listener and forwarding chain; AdGuard Home or another resolver may bypass it. Initially refuse automatic resolver replacement in an unsupported layout and explain the required DNS path. DoH, cached answers, and clients using external DNS can leave sets empty or incomplete. Do not redirect all DNS or change DHCP settings silently.
+Domain routing needs client DNS answers to pass through the integrated resolver. Verify the active DNS listener and forwarding chain; AdGuard Home or another resolver may skip it. Initially refuse automatic resolver replacement in an unsupported layout and explain the required DNS path. DoH, cached answers, and clients using external DNS can leave sets empty or incomplete. Do not redirect all DNS or change DHCP settings silently.
 
-The initial routing implementation covers IPv4. Warn when eligible clients have a public IPv6 path, require acknowledgment before enabling IPv4-only bypass on that network, and keep the limitation visible in status. Do not disable IPv6 globally or change another application's IPv6 policies. IPv4-only operation cannot establish that every authentication connection used the VPN.
+The initial routing implementation covers IPv4. Warn when eligible clients have a public IPv6 path, require acknowledgment before enabling IPv4-only routing on that network, and keep the limitation visible in status. Do not disable IPv6 globally or change another application's IPv6 policies. IPv4-only operation cannot establish that every client connection used the VPN.
 
 ## OpenVPN and tunnel ownership
 
@@ -95,12 +89,12 @@ Allow read methods for sanitized settings, status, devices, job state, and diagn
 
 The backend accepts no arbitrary command, path, service name, or download URL. Use fixed operations and private request data for worker input; never interpolate form values into shell text. Validate again on the backend, escape displayed text, reject symlinks in private storage, and use root ownership, restrictive permissions, and atomic replacement. Diagnostics use an output allowlist and bounded redacted log excerpts. Private keys, passwords, and tokens never appear in normal RPC replies or downloadable reports. Root access or a compromised LuCI session remains outside these protections.
 
-Status separates a usable tunnel, installed policies, observed matching traffic, successful authentication, and an established game stream. Configuration checks establish only the first two. Show exit IP and country only when an optional tunnel-bound lookup provides reliable evidence; otherwise leave them unknown.
+Status separates a usable tunnel, installed policies and observed matching traffic. Configuration checks establish only the first two. Show exit IP and country only when an optional tunnel-bound lookup provides reliable evidence; otherwise leave them unknown.
 
 ## Distribution and validation
 
 Build APKs using the matching SDK and [OpenWrt packaging rules](https://github.com/openwrt/openwrt/blob/openwrt-25.12/include/package-pack.mk), with declared dependencies and idempotent hooks. The installer uses versioned assets, verifies hashes, and retains APK signature verification. An application signing key must have a documented fingerprint and explicit installation consent; never use a general `--allow-untrusted` workaround. A checksum downloaded beside an artifact detects corruption but does not independently authenticate the publisher. Document the initial trust in the versioned installer and signing key. No public installation command is ready until real release assets exist.
 
-Automate validators, profile parsing, generation, ownership, failure recovery, permissions, installer decisions, and RPC boundaries. Then test on OpenWrt: external tunnel attachment with PBR, reboot/reconnect/network reload, resolver replacement and rollback, nftset updates, selected-source routing, WAN and management preservation, IPv6 warnings, and clean uninstall. Test packets and counters separately from configuration generation. Xbox authentication and streaming need a real console and flow observation; unit tests cannot establish either.
+Automate validators, profile parsing, generation, ownership, failure recovery, permissions, installer decisions, and RPC boundaries. Then test on OpenWrt: external tunnel attachment with PBR, reboot/reconnect/network reload, resolver replacement and rollback, nftset updates, selected-source routing, WAN and management preservation, IPv6 warnings, and clean uninstall. Test packets and counters separately from configuration generation. Client connectivity and packet egress need real router observation; unit tests cannot establish either.
 
 All sources above were inspected on 12 November 2026. The OpenWrt homepage and referenced client-LuCI wiki page returned an access-denied challenge; package and netifd source were used for those integration decisions. Branch URLs can change, so pin SDK and feed revisions when building and record the actual installed versions during validation.
