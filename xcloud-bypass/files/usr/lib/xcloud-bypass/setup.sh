@@ -98,7 +98,7 @@ xcb_setup_wizard() (
 	bundle='' applied=0 tty_state=''
 	trap '[ -z "$tty_state" ] || stty "$tty_state" < /dev/tty; if [ "$applied" = 0 ] && [ -n "$bundle" ]; then xcb_private_directory "$bundle" && rm -rf -- "$bundle"; fi' EXIT
 	trap 'exit 1' HUP INT TERM
-	printf 'Xbox Cloud Gaming bypass setup\n\n'
+	printf 'XCloud Gaming bypass setup\n\n'
 	xcb_setup_peer || { xcb_setup_error 'A valid SSH client IPv4 address is required.'; exit 1; }
 	url=$(xcb_setup_router_url "$peer" || :)
 	[ -z "$url" ] || printf 'Router URL: %s\n' "$url"

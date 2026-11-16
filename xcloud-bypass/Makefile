@@ -11,14 +11,14 @@ define Package/xcloud-bypass
   SECTION:=net
   CATEGORY:=Network
   SUBMENU:=Routing and Redirection
-  TITLE:=Selective Xbox Cloud Gaming authentication routing
+  TITLE:=Selective XCloud Gaming authentication routing
   URL:=https://github.com/r0m41q/openwrt-xcloud-bypass
   PKGARCH:=all
   DEPENDS:=+pbr +openvpn-openssl +firewall4 +uci +ubus +jshn +jsonfilter +ip-full +nftables-json +flock +ss +coreutils-timeout
 endef
 
 define Package/xcloud-bypass/description
-  Route selected Xbox Cloud Gaming authentication connections through OpenVPN.
+  Route selected XCloud Gaming authentication connections through OpenVPN.
   Configuration is disabled by default and kept separate from existing policies.
 endef
 
@@ -39,6 +39,7 @@ define Package/xcloud-bypass/install
 	$(INSTALL_DATA) ./files/usr/lib/xcloud-bypass/*.awk $(1)/usr/lib/xcloud-bypass/
 	$(INSTALL_BIN) ./files/usr/lib/xcloud-bypass/recovery-watch $(1)/usr/lib/xcloud-bypass/
 	$(INSTALL_BIN) ./files/usr/lib/xcloud-bypass/control $(1)/usr/lib/xcloud-bypass/
+	$(INSTALL_BIN) ./files/usr/lib/xcloud-bypass/rpc-bridge $(1)/usr/lib/xcloud-bypass/
 	$(INSTALL_BIN) ./files/usr/bin/xcloud-bypass $(1)/usr/bin/
 	$(INSTALL_BIN) ./files/usr/lib/xcloud-bypass/supervise $(1)/usr/lib/xcloud-bypass/
 	$(INSTALL_BIN) ./files/usr/lib/xcloud-bypass/signal-event $(1)/usr/lib/xcloud-bypass/

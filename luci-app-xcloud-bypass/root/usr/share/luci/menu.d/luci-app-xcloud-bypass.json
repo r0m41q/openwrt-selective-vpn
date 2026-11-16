@@ -1,0 +1,8 @@
+{
+	"admin/services/xcloud-bypass": {
+		"title": "XCloud Gaming",
+		"order": 60,
+		"action": { "type": "firstchild" },
+		"depends": { "acl": [ "luci-app-xcloud-bypass" ] }
+	}
+}
