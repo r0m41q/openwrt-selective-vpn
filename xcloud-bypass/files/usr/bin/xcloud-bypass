@@ -1,0 +1,40 @@
+#!/bin/sh
+set -eu
+
+. /usr/lib/xcloud-bypass/load.sh
+
+xcb_cli_help() {
+	cat <<'HELP'
+Usage: xcloud-bypass COMMAND
+
+Commands:
+  setup       Configure VPN and routing over SSH
+  status      Show current state as JSON
+  doctor      Show redacted diagnostics as JSON
+  confirm     Keep a pending change after checking SSH access
+  disable     Stop bypass routing
+  rollback    Restore the previous confirmed configuration
+  uninstall   Remove bypass configuration and owned resources
+  help        Show this help
+
+Changes to routing need confirmation within 120 seconds or they roll back.
+HELP
+}
+
+[ "$#" -eq 1 ] || { xcb_cli_help >&2; exit 1; }
+case "$1" in
+	setup) xcb_setup_wizard ;;
+	status|doctor) xcb_report "$1" ;;
+	confirm)
+		[ "$(id -u)" -eq 0 ] || exit 1
+		id=$(xcb_tx_pointer pending) || { printf 'No change is pending.\n' >&2; exit 1; }
+		xcb_lifecycle confirm "$id" ;;
+	disable|rollback)
+		[ "$(id -u)" -eq 0 ] || exit 1
+		xcb_setup_peer || { printf 'An SSH client IPv4 address is required.\n' >&2; exit 1; }
+		xcb_lifecycle "$1" "$peer"
+		printf 'Check SSH and the router UI, then run xcloud-bypass confirm.\n' ;;
+	uninstall) xcb_setup_uninstall ;;
+	help|-h|--help) xcb_cli_help ;;
+	*) xcb_cli_help >&2; exit 1 ;;
+esac

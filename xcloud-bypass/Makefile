@@ -33,12 +33,13 @@ define Build/Compile
 endef
 
 define Package/xcloud-bypass/install
-	$(INSTALL_DIR) $(1)/etc/config $(1)/usr/lib/xcloud-bypass
+	$(INSTALL_DIR) $(1)/etc/config $(1)/usr/lib/xcloud-bypass $(1)/usr/bin
 	$(INSTALL_CONF) ./files/etc/config/xcloud-bypass $(1)/etc/config/xcloud-bypass
 	$(INSTALL_DATA) ./files/usr/lib/xcloud-bypass/*.sh $(1)/usr/lib/xcloud-bypass/
 	$(INSTALL_DATA) ./files/usr/lib/xcloud-bypass/*.awk $(1)/usr/lib/xcloud-bypass/
 	$(INSTALL_BIN) ./files/usr/lib/xcloud-bypass/recovery-watch $(1)/usr/lib/xcloud-bypass/
 	$(INSTALL_BIN) ./files/usr/lib/xcloud-bypass/control $(1)/usr/lib/xcloud-bypass/
+	$(INSTALL_BIN) ./files/usr/bin/xcloud-bypass $(1)/usr/bin/
 	$(INSTALL_BIN) ./files/usr/lib/xcloud-bypass/supervise $(1)/usr/lib/xcloud-bypass/
 	$(INSTALL_BIN) ./files/usr/lib/xcloud-bypass/signal-event $(1)/usr/lib/xcloud-bypass/
 	$(INSTALL_BIN) ./files/usr/lib/xcloud-bypass/service-run $(1)/usr/lib/xcloud-bypass/
