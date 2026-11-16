@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Start with the application's Overview and Diagnostics pages under **Services**. In the current development build, use `xcloud-bypass status` and `xcloud-bypass doctor` over SSH. The downloadable report is redacted; raw packet captures and the read-only router probe can contain local network details, so keep them private.
+Start with the application's Overview and Diagnostics pages under **Services**. In the current development build, use `selective-vpn status` and `selective-vpn doctor` over SSH. The downloadable report is redacted; raw packet captures and the read-only router probe can contain local network details, so keep them private.
 
 If the tunnel is missing, check that the OpenVPN client starts, its TUN device has an IPv4 address, and its profile passed peer verification. Managed profiles can be reconnected from LuCI. Existing clients keep their own OpenVPN controls. A started process alone does not establish a usable tunnel.
 

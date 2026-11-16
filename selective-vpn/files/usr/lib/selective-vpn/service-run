@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+. /usr/lib/selective-vpn/common.sh
+case "$*" in
+	'openvpn start svpn_client'|'openvpn stop svpn_client'|'pbr reload'|'pbr stop'|'pbr running'|'pbr version'|'firewall reload') ;;
+	*) exit 1 ;;
+esac
+
+# the timer survives the request and kills the whole service call group
+(
+	exec 8>&- 9>&-
+	sleep 15
+	kill -KILL -"$$"
+) &
+timer=$!
+trap 'kill "$timer" 2>/dev/null || :' EXIT
+service=$1; shift
+"$SVPN_INIT_DIR/$service" "$@"

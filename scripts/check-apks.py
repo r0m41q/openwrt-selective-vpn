@@ -18,7 +18,7 @@ def source_files(root, name):
     if (base / "LICENSE").read_bytes() != (root / "LICENSE").read_bytes():
         fail(f"{name}: license differs from the repository license")
     files = {}
-    if name == "xcloud-bypass":
+    if name == "selective-vpn":
         for source in (base / "files").rglob("*"):
             if source.is_file():
                 files[source.relative_to(base / "files").as_posix()] = source
@@ -35,7 +35,7 @@ def source_files(root, name):
                 )
         for source in (base / "root").rglob("*"):
             if source.is_file():
-                if source.suffix != ".json" and source.name != "xcloud-bypass":
+                if source.suffix != ".json" and source.name != "selective-vpn":
                     fail(f"Unexpected LuCI source: {source}")
                 files[source.relative_to(base / "root").as_posix()] = source
     files[f"usr/share/licenses/{name}/LICENSE"] = base / "LICENSE"
@@ -43,11 +43,11 @@ def source_files(root, name):
 
 
 def mode_for(path):
-    if path == "etc/config/xcloud-bypass":
+    if path == "etc/config/selective-vpn":
         return 0o600
-    if path == "etc/init.d/xcloud-bypass" or path == "usr/bin/xcloud-bypass":
+    if path == "etc/init.d/selective-vpn" or path == "usr/bin/selective-vpn":
         return 0o755
-    if path.startswith("usr/lib/xcloud-bypass/") and not path.endswith(
+    if path.startswith("usr/lib/selective-vpn/") and not path.endswith(
         (".sh", ".awk")
     ):
         return 0o755
@@ -55,7 +55,7 @@ def mode_for(path):
 
 
 def check_removal(removal):
-    if "xcloud-bypass uninstall before removing the package" not in removal:
+    if "selective-vpn uninstall before removing the package" not in removal:
         fail("Core package is missing its removal guard.")
     guard = removal.split("default_prerm\n", 1)[1]
     with tempfile.TemporaryDirectory() as temporary:
@@ -68,8 +68,8 @@ def check_removal(removal):
         uci.chmod(0o755)
         service.write_text(f'#!/bin/sh\nprintf "%s\\n" "$1" >> "{calls}"\n')
         service.chmod(0o755)
-        guard = guard.replace("/etc/xcloud-bypass/pending", str(pending))
-        guard = guard.replace("/etc/init.d/xcloud-bypass", str(service))
+        guard = guard.replace("/etc/selective-vpn/pending", str(pending))
+        guard = guard.replace("/etc/init.d/selective-vpn", str(service))
         for active, upgrade, is_pending, code, expected in (
             ("0", "0", False, 0, []),
             ("1", "0", False, 1, ["enable", "start"]),
@@ -149,7 +149,7 @@ def inspect(apk, root, output, name, version):
                 fail(f"{name}: unexpected owner or mode: {path}")
     if found != expected.keys():
         fail(f"{name}: missing files: {sorted(expected.keys() - found)}")
-    if name == "xcloud-bypass":
+    if name == "selective-vpn":
         removal = data.get("scripts", {}).get("pre-deinstall", "")
         check_removal(removal)
     print(f"Checked {name}: {len(found)} source files, no extra payload")
@@ -159,7 +159,7 @@ def main():
     if len(sys.argv) != 5:
         fail("Usage: check-apks.py SDK_APK PROJECT_ROOT OUTPUT_DIR VERSION")
     apk, root, output, version = map(Path, sys.argv[1:])
-    for name in ("xcloud-bypass", "luci-app-xcloud-bypass"):
+    for name in ("selective-vpn", "luci-app-selective-vpn"):
         inspect(apk, root, output, name, str(version))
 
 

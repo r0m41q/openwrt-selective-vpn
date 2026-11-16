@@ -1,3 +1,0 @@
-#!/bin/sh
-
-case "${ACTION:-}" in up|down|route-up|route-pre-down|ipchange) /usr/lib/xcloud-bypass/signal-event ;; esac

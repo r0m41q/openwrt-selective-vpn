@@ -29,7 +29,7 @@ def package(name, version):
         "info": {
             "name": name,
             "version": version,
-            "arch": "noarch" if "xcloud-bypass" in name else "x86_64",
+            "arch": "noarch" if "selective-vpn" in name else "x86_64",
             "installed-size": 4096,
         }
     }
@@ -60,8 +60,8 @@ def solve(arguments):
         names = {re.split(r"[=@~<>]", value)[0] for value in constraints}
         for name in list(after):
             if name not in names and name in {
-                "xcloud-bypass",
-                "luci-app-xcloud-bypass",
+                "selective-vpn",
+                "luci-app-selective-vpn",
                 "dnsmasq-full",
             }:
                 del after[name]
@@ -69,7 +69,7 @@ def solve(arguments):
             if "=" in arg and not arg.startswith("--"):
                 name, version = arg.split("=", 1)
                 requested[name] = version
-    elif "xcloud-bypass" in requested:
+    elif "selective-vpn" in requested:
         requested.setdefault("pbr", "1.2.2-r20")
     if "dnsmasq-full" in requested:
         after.pop("dnsmasq", None)
@@ -164,7 +164,7 @@ if command == "apk":
                 lines.append(f"{name}={version}")
             world.write_text("\n".join(sorted(lines)) + "\n")
             if not recovery:
-                path = root / "etc/config/xcloud-bypass"
+                path = root / "etc/config/selective-vpn"
                 if not path.exists():
                     path.write_text(
                         "config settings 'main'\n option enabled '0'\n"

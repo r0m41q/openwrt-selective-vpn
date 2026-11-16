@@ -14,4 +14,4 @@ Before using `install.sh` on a router, verify the public key fingerprint through
 
 The build currently covers x86/64 SDK packaging. Both packages declare `noarch`, but installation and runtime behavior on other OpenWrt targets still need testing. The router integration procedure is in [integration.md](integration.md).
 
-For a disposable local test build and signed APK installation, follow [installation.md](installation.md#local-test-installation). The current output still carries the old package names. No release tag, persistent signing key or public APK has been published.
+For a disposable local test build and signed APK installation, follow [installation.md](installation.md#local-test-installation). No release tag, persistent signing key or public APK has been published.

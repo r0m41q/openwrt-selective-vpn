@@ -10,7 +10,7 @@ import test_transaction as recovery
 
 SOURCE = (
     Path(__file__).resolve().parents[1]
-    / "xcloud-bypass/files/usr/lib/xcloud-bypass"
+    / "selective-vpn/files/usr/lib/selective-vpn"
 )
 
 
@@ -22,7 +22,7 @@ class RoutingTests(unittest.TestCase):
         self.f = self.life.f
         self.root = self.life.root
         self.write = self.life.write
-        self.stage = Path("/tmp/xcloud-rpc." + secrets.token_hex(3))
+        self.stage = Path("/tmp/selective-vpn-rpc." + secrets.token_hex(3))
         self.stage.mkdir(mode=0o700)
         self.addCleanup(shutil.rmtree, self.stage)
         load = self.root / "load.sh"
@@ -63,7 +63,7 @@ class RoutingTests(unittest.TestCase):
         self.bridge.write_text(
             (SOURCE / "rpc-bridge")
             .read_text()
-            .replace("/usr/lib/xcloud-bypass/load.sh", str(load))
+            .replace("/usr/lib/selective-vpn/load.sh", str(load))
             .replace("/usr/share/libubox/jshn.sh", str(jshn))
         )
         self.options = dict(
@@ -124,7 +124,7 @@ class RoutingTests(unittest.TestCase):
     def test_selected_devices_and_both_modes_have_exact_sources(self):
         result = self.preview(
             scope="devices",
-            devices="xbox\n192.168.8.13",
+            devices="device\n192.168.8.13",
             browser="1",
             custom="example.org 198.51.100.0/24",
         )
@@ -165,7 +165,7 @@ class RoutingTests(unittest.TestCase):
         path = self.f.config / "network"
         path.write_text(
             path.read_text()
-            + "\nconfig interface 'xcloud_vpn'\n option proto 'none'\n"
+            + "\nconfig interface 'svpn_vpn'\n option proto 'none'\n"
         )
         result = self.preview()
         self.assertFalse(result["ok"])
@@ -175,7 +175,7 @@ class RoutingTests(unittest.TestCase):
     def test_leases_filter_invalid_and_expired_values(self):
         self.write(
             self.life.n.leases,
-            "0 aa:bb:cc:dd:ee:ff 192.168.8.12 XBOX client\n"
+            "0 aa:bb:cc:dd:ee:ff 192.168.8.12 DEVICE client\n"
             "1 aa:bb:cc:dd:ee:ff 192.168.8.13 expired client\n"
             "0 aa:bb:cc:dd:ee:ff 999.1.1.1 invalid client\n"
             "0 aa:bb:cc:dd:ee:ff 192.168.8.14 $(id) client\n",
@@ -189,7 +189,7 @@ class RoutingTests(unittest.TestCase):
         result = self.request("leases")
         self.assertEqual(
             result["leases"].splitlines(),
-            ["192.168.8.12\txbox", "192.168.8.15\tbrowser"],
+            ["192.168.8.12\tdevice", "192.168.8.15\tbrowser"],
         )
 
     def test_stale_review_is_refused_before_any_network_mutation(self):

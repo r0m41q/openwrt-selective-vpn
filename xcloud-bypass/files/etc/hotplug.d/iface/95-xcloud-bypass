@@ -1,3 +1,0 @@
-#!/bin/sh
-
-case "${ACTION:-}" in ifup|ifdown|ifupdate) /usr/lib/xcloud-bypass/signal-event ;; esac

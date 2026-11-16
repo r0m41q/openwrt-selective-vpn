@@ -8,37 +8,41 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-BRIDGE = ROOT / "xcloud-bypass/files/usr/lib/xcloud-bypass/rpc-bridge"
-FRONTEND = ROOT / "luci-app-xcloud-bypass/root/usr/share"
-SHELL = shlex.split(os.environ.get("XCB_TEST_SHELL", "/bin/sh"))
+BRIDGE = ROOT / "selective-vpn/files/usr/lib/selective-vpn/rpc-bridge"
+FRONTEND = ROOT / "luci-app-selective-vpn/root/usr/share"
+SHELL = shlex.split(os.environ.get("SVPN_TEST_SHELL", "/bin/sh"))
 
 
 class RpcTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="xcloud-rpc-test-")
+        self.temp = tempfile.TemporaryDirectory(
+            prefix="selective-vpn-rpc-test-"
+        )
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.stage = Path("/tmp/xcloud-rpc." + secrets.token_hex(3))
+        self.stage = Path("/tmp/selective-vpn-rpc." + secrets.token_hex(3))
         self.stage.mkdir(mode=0o700)
         self.addCleanup(lambda: self.stage.rmdir())
         self.load = self.root / "load.sh"
         self.load.write_text(
             f"""
-            XCB_PROFILE_DIR={shlex.quote(str(self.root / "profiles"))}
-            xcb_runtime_directory() {{ printf '%s\\n' "$test_root"; }}
+            SVPN_PROFILE_DIR={shlex.quote(str(self.root / "profiles"))}
+            svpn_runtime_directory() {{ printf '%s\\n' "$test_root"; }}
             test_root={shlex.quote(str(self.root))}
             id() {{ printf '0\\n'; }}
-            xcb_private_directory() {{ [ -d "$1" ] && [ ! -L "$1" ]; }}
-            xcb_private_file() {{ [ -f "$1" ] && [ ! -L "$1" ]; }}
-            xcb_valid_ipv4() {{ [ "$1" = 192.168.1.2 ]; }}
-            xcb_valid_bool() {{ [ "$1" = 0 ] || [ "$1" = 1 ]; }}
-            xcb_normalize_list() {{ printf '%s' "$2"; }}
-            xcb_policy_destinations() {{ printf '%s' "$1"; }}
-            xcb_state_id() {{ [ "$1" = valid-id ]; }}
-            xcb_setup_preview() {{ printf 'Safe scope\\n'; }}
-            xcb_lifecycle() {{ printf '%s\\n' "$@" > "$test_root/lifecycle"; }}
-            xcb_tx_pointer() {{ printf 'valid-id\\n'; }}
-            xcb_profile_credentials() {{ cat > "$test_root/received"; }}
+            svpn_private_directory() {{ [ -d "$1" ] && [ ! -L "$1" ]; }}
+            svpn_private_file() {{ [ -f "$1" ] && [ ! -L "$1" ]; }}
+            svpn_valid_ipv4() {{ [ "$1" = 192.168.1.2 ]; }}
+            svpn_valid_bool() {{ [ "$1" = 0 ] || [ "$1" = 1 ]; }}
+            svpn_normalize_list() {{ printf '%s' "$2"; }}
+            svpn_policy_destinations() {{ printf '%s' "$1"; }}
+            svpn_state_id() {{ [ "$1" = valid-id ]; }}
+            svpn_setup_preview() {{ printf 'Safe scope\\n'; }}
+            svpn_lifecycle() {{
+                printf '%s\\n' "$@" > "$test_root/lifecycle";
+            }}
+            svpn_tx_pointer() {{ printf 'valid-id\\n'; }}
+            svpn_profile_credentials() {{ cat > "$test_root/received"; }}
             """
         )
         self.jshn = self.root / "jshn.sh"
@@ -51,7 +55,7 @@ class RpcTests(unittest.TestCase):
         self.script = self.root / "rpc-bridge"
         self.script.write_text(
             BRIDGE.read_text()
-            .replace("/usr/lib/xcloud-bypass/load.sh", str(self.load))
+            .replace("/usr/lib/selective-vpn/load.sh", str(self.load))
             .replace("/usr/share/libubox/jshn.sh", str(self.jshn))
         )
 
@@ -70,10 +74,10 @@ class RpcTests(unittest.TestCase):
 
     def test_acl_exposes_only_named_methods(self):
         acl = json.loads(
-            (FRONTEND / "rpcd/acl.d/luci-app-xcloud-bypass.json").read_text()
-        )["luci-app-xcloud-bypass"]
-        read = set(acl["read"]["ubus"]["xcloud-bypass"])
-        write = set(acl["write"]["ubus"]["xcloud-bypass"])
+            (FRONTEND / "rpcd/acl.d/luci-app-selective-vpn.json").read_text()
+        )["luci-app-selective-vpn"]
+        read = set(acl["read"]["ubus"]["selective-vpn"])
+        write = set(acl["write"]["ubus"]["selective-vpn"])
         self.assertFalse(read & write)
         self.assertEqual(
             read,
@@ -97,7 +101,7 @@ class RpcTests(unittest.TestCase):
     def test_profiles_and_summary_do_not_read_credentials(self):
         bundle = self.root / "profiles/profile.abcdefgh"
         bundle.mkdir(parents=True)
-        (bundle / "summary").write_text("auth_required=1\ndevice=tun_xc0\n")
+        (bundle / "summary").write_text("auth_required=1\ndevice=tun_sv0\n")
         (bundle / "credentials").write_text("alice\nprivate password\n")
         self.jshn.write_text(
             "json_init() { :; }\n"

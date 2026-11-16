@@ -18,7 +18,7 @@ class ReportTests(unittest.TestCase):
         self.f = self.lifecycle.f
         self.root = self.lifecycle.root
         self.write = self.lifecycle.write
-        self.setup = self.lifecycle.setup + '. "$XCB_LIBRARY_DIR/report.sh"; '
+        self.setup = self.lifecycle.setup + '. "$SVPN_LIBRARY_DIR/report.sh"; '
         (self.root / "strict-jsonfilter").touch(mode=0o600)
         self.write(self.root / "logs", "")
         self.write(
@@ -50,7 +50,7 @@ class ReportTests(unittest.TestCase):
         self.assertLess(len(result.stdout), 8192)
         value = json.loads(result.stdout, object_pairs_hook=self.object_pairs)
         self.assertEqual(value["schema"], 1)
-        for field in ("vpn_egress", "xbox_authentication", "game_stream"):
+        for field in ("vpn_egress", "device_authentication", "game_stream"):
             self.assertEqual(value["evidence"][field], "unverified")
         self.assertFalse(list(self.f.runtime.glob("report.*")))
         return value
@@ -61,7 +61,7 @@ class ReportTests(unittest.TestCase):
                 *recovery.SHELL,
                 "-eu",
                 "-c",
-                self.setup + extra + 'xcb_report "$@"',
+                self.setup + extra + 'svpn_report "$@"',
                 "report",
                 str(self.f.library),
                 *args,
@@ -92,7 +92,7 @@ class ReportTests(unittest.TestCase):
                         {"metainfo": {"json_schema_version": 1}},
                         {
                             "rule": {
-                                "comment": "Xbox console authentication",
+                                "comment": "Console authentication",
                                 "expr": [
                                     {
                                         "counter": {
@@ -145,7 +145,7 @@ class ReportTests(unittest.TestCase):
         self.assertTrue(value["firewall"]["masquerading"])
         self.assertTrue(value["firewall"]["input_restricted"])
         self.assertEqual(before, self.snapshot())
-        added = (self.root / "calls").read_text().splitlines()[len(calls):]
+        added = (self.root / "calls").read_text().splitlines()[len(calls) :]
         self.assertTrue(
             all(c in ("pbr version", "pbr running") for c in added)
         )
@@ -153,7 +153,7 @@ class ReportTests(unittest.TestCase):
     def test_overview_details_are_validated_and_excluded_from_doctor(self):
         self.lifecycle.activate()
         value = self.report()
-        self.assertEqual(value["details"]["interface"], "tun_xc0")
+        self.assertEqual(value["details"]["interface"], "tun_sv0")
         self.assertTrue(value["details"]["addresses"])
         self.assertEqual(value["details"]["console_sources"], "192.168.8.0/24")
         self.assertEqual(
@@ -254,7 +254,7 @@ class ReportTests(unittest.TestCase):
         self.write(
             self.root / "logs",
             "".join(
-                "Thu Nov 12 daemon.err openvpn(xcloud_client)[123]: "
+                "Thu Nov 12 daemon.err openvpn(svpn_client)[123]: "
                 + message
                 + " "
                 + " ".join(secrets)
@@ -423,8 +423,8 @@ class ReportTests(unittest.TestCase):
         self.f.runtime.mkdir(mode=0o700)
         extra = (
             f"report_work={shlex.quote(str(self.f.runtime))}; "
-            "report_until=$(($(xcb_uptime) + 1)); "
-            'xcb_report_capture "$report_work/capture" '
+            "report_until=$(($(svpn_uptime) + 1)); "
+            'svpn_report_capture "$report_work/capture" '
         )
         for command in (
             "python3 -c 'print(\"SECRET_9\" * 50000)'",

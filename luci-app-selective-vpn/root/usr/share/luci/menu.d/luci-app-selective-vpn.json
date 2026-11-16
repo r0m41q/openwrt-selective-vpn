@@ -1,0 +1,32 @@
+{
+	"admin/services/selective-vpn": {
+		"title": "Selective VPN",
+		"order": 60,
+		"action": { "type": "firstchild" },
+		"depends": { "acl": [ "luci-app-selective-vpn" ] }
+	},
+	"admin/services/selective-vpn/overview": {
+		"title": "Overview",
+		"order": 1,
+		"action": { "type": "view", "path": "selective-vpn/overview" },
+		"depends": { "acl": [ "luci-app-selective-vpn" ] }
+	},
+	"admin/services/selective-vpn/vpn": {
+		"title": "VPN",
+		"order": 10,
+		"action": { "type": "view", "path": "selective-vpn/vpn" },
+		"depends": { "acl": [ "luci-app-selective-vpn" ] }
+	},
+	"admin/services/selective-vpn/routing": {
+		"title": "Routing",
+		"order": 20,
+		"action": { "type": "view", "path": "selective-vpn/routing" },
+		"depends": { "acl": [ "luci-app-selective-vpn" ] }
+	},
+	"admin/services/selective-vpn/diagnostics": {
+		"title": "Diagnostics",
+		"order": 30,
+		"action": { "type": "view", "path": "selective-vpn/diagnostics" },
+		"depends": { "acl": [ "luci-app-selective-vpn" ] }
+	}
+}

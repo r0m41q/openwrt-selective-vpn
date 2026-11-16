@@ -11,7 +11,7 @@ import time
 import unittest
 
 SOURCE = Path(__file__).resolve().parents[1]
-SHELL = shlex.split(os.environ.get("XCB_TEST_SHELL", "/bin/sh"))
+SHELL = shlex.split(os.environ.get("SVPN_TEST_SHELL", "/bin/sh"))
 VERSION = "0.1.0-r1"
 DEFAULT_DHCP = (
     "config dnsmasq\n"
@@ -35,7 +35,9 @@ class InstallerTests(unittest.TestCase):
     def setUp(self):
         previous_umask = os.umask(0o022)
         self.addCleanup(os.umask, previous_umask)
-        self.temp = tempfile.TemporaryDirectory(prefix="xcloud-installer-")
+        self.temp = tempfile.TemporaryDirectory(
+            prefix="selective-vpn-installer-"
+        )
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         for path in (
@@ -99,12 +101,12 @@ class InstallerTests(unittest.TestCase):
             f"PATH={self.root}/bin:{os.environ['PATH']}",
         )
         for path in (
-            "/etc/xcloud-bypass-install",
+            "/etc/selective-vpn-install",
             "/etc/apk/world",
             "/etc/config",
             "/etc/init.d",
-            "/etc/xcloud-bypass",
-            "/var/run/xcloud-bypass",
+            "/etc/selective-vpn",
+            "/var/run/selective-vpn",
             "/proc",
             "/tmp",
         ):
@@ -147,9 +149,9 @@ class InstallerTests(unittest.TestCase):
                 ).encode()
             ).hexdigest()
 
-        arguments = ["--version", VERSION, "--sha256", digest("xcloud-bypass")]
+        arguments = ["--version", VERSION, "--sha256", digest("selective-vpn")]
         if luci:
-            arguments += ["--luci-sha256", digest("luci-app-xcloud-bypass")]
+            arguments += ["--luci-sha256", digest("luci-app-selective-vpn")]
         return arguments
 
     def run_install(self, data="n\n", arguments=None, **kwargs):
@@ -174,7 +176,7 @@ class InstallerTests(unittest.TestCase):
         self.assertFalse(
             any(call[0] in {"mutation", "service"} for call in self.calls())
         )
-        self.assertFalse((self.root / "etc/xcloud-bypass-install").exists())
+        self.assertFalse((self.root / "etc/selective-vpn-install").exists())
         self.assertEqual(
             json.loads((self.root / "packages.json").read_text()),
             self.packages,
@@ -205,14 +207,14 @@ class InstallerTests(unittest.TestCase):
             result = self.run_install("y\n")
             self.assertEqual(result.returncode, 0, result.stderr.decode())
         packages = json.loads((self.root / "packages.json").read_text())
-        self.assertEqual(packages["xcloud-bypass"], VERSION)
+        self.assertEqual(packages["selective-vpn"], VERSION)
         self.assertIn("dnsmasq-full", packages)
         self.assertNotIn("dnsmasq", packages)
-        backup = self.root / "etc/xcloud-bypass-install"
+        backup = self.root / "etc/selective-vpn-install"
         self.assertEqual(backup.stat().st_mode & 0o777, 0o700)
         self.assertFalse((backup / "armed").exists())
         self.assertNotIn(
-            "xcloud-bypass", (backup / "first-installed").read_text()
+            "selective-vpn", (backup / "first-installed").read_text()
         )
 
     def test_full_dnsmasq_needs_no_replacement(self):
@@ -230,7 +232,7 @@ class InstallerTests(unittest.TestCase):
         self.save_packages()
         result = self.run_install("y\n", self.arguments(luci=True))
         self.assertEqual(result.returncode, 0, result.stderr.decode())
-        self.assertIn("Services > xCloud Bypass", result.stdout.decode())
+        self.assertIn("Services > Selective VPN", result.stdout.decode())
 
     def test_preflight_failures(self):
         for name in (
@@ -312,14 +314,14 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("Missing required tool: curl", result.stderr.decode())
 
     def test_pending_recovery_and_backend_lock(self):
-        private = self.root / "etc/xcloud-bypass"
+        private = self.root / "etc/selective-vpn"
         private.mkdir(mode=0o700)
         (private / "pending").touch(mode=0o600)
         result = self.run_install("y\n")
-        self.assertIn("pending bypass operation", result.stderr.decode())
+        self.assertIn("pending routing change", result.stderr.decode())
         self.no_mutations()
         (private / "pending").unlink()
-        runtime = self.root / "var/run/xcloud-bypass"
+        runtime = self.root / "var/run/selective-vpn"
         runtime.mkdir(parents=True, mode=0o700)
         lock = runtime / "lifecycle.lock"
         lock.touch(mode=0o600)
@@ -328,7 +330,7 @@ class InstallerTests(unittest.TestCase):
         with lock.open("r+") as stream:
             fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
             result = self.run_install("y\n")
-        self.assertIn("bypass is busy", result.stderr.decode())
+        self.assertIn("Selective VPN is busy", result.stderr.decode())
 
     def test_full_dnsmasq_without_nftset_is_rejected(self):
         self.packages.pop("dnsmasq")
@@ -374,7 +376,7 @@ class InstallerTests(unittest.TestCase):
                 )
                 for package_name, version in self.packages.items():
                     self.assertEqual(packages[package_name], version)
-                self.assertNotIn("xcloud-bypass", packages)
+                self.assertNotIn("selective-vpn", packages)
                 self.assertEqual(
                     (self.root / "etc/apk/world").read_text(), "dnsmasq\nuci\n"
                 )
@@ -385,9 +387,9 @@ class InstallerTests(unittest.TestCase):
                 (self.root / name).unlink()
 
     def test_upgrade_preserves_settings(self):
-        self.packages["xcloud-bypass"] = "0.0.9-r1"
+        self.packages["selective-vpn"] = "0.0.9-r1"
         self.save_packages()
-        path = self.root / "etc/config/xcloud-bypass"
+        path = self.root / "etc/config/selective-vpn"
         path.write_text("config settings 'main'\n option console '0'\n")
         before = path.read_bytes()
         result = self.run_install("y\n")
@@ -403,7 +405,7 @@ class InstallerTests(unittest.TestCase):
             (self.root / "etc/config/firewall").read_text(), "# user edit\n"
         )
         self.assertTrue(
-            (self.root / "etc/xcloud-bypass-install/armed").exists()
+            (self.root / "etc/selective-vpn-install/armed").exists()
         )
 
     def test_symlinked_configuration_is_rejected(self):
@@ -438,7 +440,7 @@ class InstallerTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("Recovery stopped", result.stderr.decode())
             # the unrecorded package script created this synthetic default
-            (self.root / "etc/config/xcloud-bypass").unlink()
+            (self.root / "etc/config/selective-vpn").unlink()
             result = self.run_install("y\n", ["--recover"])
             self.assertEqual(result.returncode, 0, result.stderr.decode())
             self.assertIn("configuration restored", result.stderr.decode())

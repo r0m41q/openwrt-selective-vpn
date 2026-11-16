@@ -12,16 +12,18 @@ import unittest
 
 SOURCE = (
     Path(__file__).resolve().parents[1]
-    / "xcloud-bypass/files/usr/lib/xcloud-bypass"
+    / "selective-vpn/files/usr/lib/selective-vpn"
 )
-SHELL = shlex.split(os.environ.get("XCB_TEST_SHELL", "/bin/sh"))
+SHELL = shlex.split(os.environ.get("SVPN_TEST_SHELL", "/bin/sh"))
 CONFIG = "config pbr 'config'\n\toption enabled '0'\n\toption resolver_set 'n\
 one'\n\tlist supported_interface 'wan'\n"
 
 
 class TransactionTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="xcloud-recovery-")
+        self.temp = tempfile.TemporaryDirectory(
+            prefix="selective-vpn-recovery-"
+        )
         self.root = Path(self.temp.name)
         self.library = self.root / "lib"
         shutil.copytree(SOURCE, self.library)
@@ -38,12 +40,12 @@ class TransactionTests(unittest.TestCase):
         common = self.library / "common.sh"
         value = common.read_text()
         for key, path in {
-            "XCB_LIBRARY_DIR": self.library,
-            "XCB_PRIVATE_DIR": self.store,
-            "XCB_RUNTIME_DIR": self.runtime,
-            "XCB_CONFIG_DIR": self.config,
-            "XCB_PROFILE_DIR": self.profiles,
-            "XCB_CONFIG_OVERRIDE_DIR": self.root / "overrides",
+            "SVPN_LIBRARY_DIR": self.library,
+            "SVPN_PRIVATE_DIR": self.store,
+            "SVPN_RUNTIME_DIR": self.runtime,
+            "SVPN_CONFIG_DIR": self.config,
+            "SVPN_PROFILE_DIR": self.profiles,
+            "SVPN_CONFIG_OVERRIDE_DIR": self.root / "overrides",
         }.items():
             value = re.sub(
                 rf"readonly {key}='[^']*'", f"readonly {key}='{path}'", value
@@ -93,7 +95,7 @@ uci() {
         worker = self.library / "recovery-watch"
         worker.write_text(
             worker.read_text().replace(
-                ". /usr/lib/xcloud-bypass/common.sh",
+                ". /usr/lib/selective-vpn/common.sh",
                 f"test_root\
 ={shlex.quote(str(self.root))}; export test_root\n.\
  {shlex.quote(str(self.shim))}\n. {shlex.quote(str(common))}",
@@ -122,7 +124,7 @@ uci() {
                 *SHELL,
                 "-eu",
                 "-c",
-                self.setup_shell + extra + 'xcb_transaction "$@"',
+                self.setup_shell + extra + 'svpn_transaction "$@"',
                 "transaction",
                 str(self.library),
                 operation,
@@ -286,7 +288,7 @@ uci() {
         self.invoke("arm", identifier)
         extra = """
             mv() {
-                case "$*" in *"/.xcloud."*)
+                case "$*" in *"/.selective-vpn."*)
                     if [ -e "$test_root/renamed" ]; then return 1; fi
                     : > "$test_root/renamed" ;;
                 esac
@@ -325,13 +327,13 @@ uci() {
 
     def test_owned_section_collision_and_changed_section(self):
         path = self.config / "pbr"
-        section = "config policy 'xcloud_console'\n\toption name 'Console'\n"
+        section = "config policy 'svpn_console'\n\toption name 'Console'\n"
         path.write_text(CONFIG + section)
         identifier = self.begin()
         self.assertEqual(
             self.add(
                 identifier,
-                "pbr.xcloud_console",
+                "pbr.svpn_console",
                 section,
                 "section",
                 check=False,
@@ -341,7 +343,7 @@ uci() {
         self.invoke("recover")
         path.write_text(CONFIG)
         identifier = self.begin()
-        self.add(identifier, "pbr.xcloud_console", section, "section")
+        self.add(identifier, "pbr.svpn_console", section, "section")
         self.arm_apply(identifier)
         path.write_text(path.read_text() + "\toption user_edit 'keep'\n")
         self.assertEqual(
@@ -398,7 +400,7 @@ uci() {
             ("profile.A/../../credentials", "file"),
             ("network.@interface[0].device", "option"),
             ("pbr.config", "section"),
-            ("pbr.xcloud_console.name", "option"),
+            ("pbr.svpn_console.name", "option"),
             ("system.main.hostname", "option"),
         ):
             with self.subTest(target=target):
@@ -492,7 +494,7 @@ d'\\''\nline two'\n"
         extra = """
             mv() {
                 command mv "$@" || return 1
-                case "$*" in *"/.xcloud."*)
+                case "$*" in *"/.selective-vpn."*)
                     : > "$test_root/written"
                     sleep 20 ;;
                 esac
@@ -503,7 +505,7 @@ d'\\''\nline two'\n"
                 *SHELL,
                 "-eu",
                 "-c",
-                self.setup_shell + extra + 'xcb_transaction apply "$1"',
+                self.setup_shell + extra + 'svpn_transaction apply "$1"',
                 "interrupted",
                 str(self.library),
                 identifier,
@@ -556,8 +558,10 @@ d'\\''\nline two'\n"
         identifier = self.begin()
         self.add(identifier)
         self.invoke("arm", identifier)
-        extra = 'mv() { case "$*" in *"/.xcloud."*) return 1 ;; esac; command\
- mv "$@"; }; '
+        extra = (
+            'mv() { case "$*" in *"/.selective-vpn."*) return 1 ;; esac; '
+            'command mv "$@"; }; '
+        )
         self.assertEqual(
             self.invoke(
                 "apply", identifier, extra=extra, check=False
@@ -583,7 +587,8 @@ d'\\''\nline two'\n"
         extra = """
             mv() {
                 for argument do
-                    [ "$argument" != "$XCB_PRIVATE_DIR/confirmed" ] || return 1
+                    [ "$argument" != "$SVPN_PRIVATE_DIR/confirmed" ] ||
+                        return 1
                 done
                 command mv "$@"
             }
@@ -604,7 +609,8 @@ d'\\''\nline two'\n"
         common = self.library / "common.sh"
         common.write_text(
             common.read_text().replace(
-                "readonly XCB_MAX_RESOURCES=64", "readonly XCB_MAX_RESOURCES=1"
+                "readonly SVPN_MAX_RESOURCES=64",
+                "readonly SVPN_MAX_RESOURCES=1",
             )
         )
         identifier = self.begin()
@@ -662,7 +668,7 @@ loud_vpn'\n",
                     "-c",
                     self.setup_shell
                     + hook
-                    + 'printf replacement | xcb_state_put "$1" "$2"',
+                    + 'printf replacement | svpn_state_put "$1" "$2"',
                     "state",
                     str(self.library),
                     str(path),

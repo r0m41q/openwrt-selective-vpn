@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+
+. /usr/lib/selective-vpn/load.sh
+case "${1:-}" in
+	status|doctor) svpn_report "$@" ;;
+	*) svpn_lifecycle "$@" ;;
+esac

@@ -9,16 +9,16 @@ export APK_CONFIG
 unset SSL_NO_VERIFY_HOSTNAME
 umask 077
 
-readonly backup='/etc/xcloud-bypass-install'
+readonly backup='/etc/selective-vpn-install'
 readonly world='/etc/apk/world'
 readonly config='/etc/config'
 readonly init='/etc/init.d'
-readonly private='/etc/xcloud-bypass'
+readonly private='/etc/selective-vpn'
 readonly temporary='/tmp'
-readonly runtime='/var/run/xcloud-bypass'
+readonly runtime='/var/run/selective-vpn'
 readonly proc='/proc'
-readonly release_url='https://github.com/r0m41q/openwrt-xcloud-bypass/releases/download'
-readonly saved_files='network firewall pbr dhcp openvpn xcloud-bypass'
+readonly release_url='https://github.com/r0m41q/openwrt-selective-vpn/releases/download'
+readonly saved_files='network firewall pbr dhcp openvpn selective-vpn'
 work=''
 locked=0
 armed=0
@@ -59,7 +59,7 @@ safe_directory() {
 replace_file() (
 	safe_file "$1" && safe_directory "${2%/*}" || exit 1
 	if [ -e "$2" ] || [ -L "$2" ]; then safe_file "$2" || exit 1; fi
-	copy=$(mktemp "${2%/*}/.xcloud-install.XXXXXXXX") || exit 1
+	copy=$(mktemp "${2%/*}/.selective-vpn-install.XXXXXXXX") || exit 1
 	trap 'rm -f "$copy"' EXIT
 	cp -p "$1" "$copy" && mv "$copy" "$2"
 )
@@ -108,7 +108,7 @@ fetch_release() {
 
 cache_previous() {
 	case "$1" in
-		xcloud-bypass|luci-app-xcloud-bypass)
+		selective-vpn|luci-app-selective-vpn)
 			previous="$work/old/$1-$2.apk"
 			curl --disable --fail --silent --show-error --location --proto '=https' \
 				--proto-redir '=https' --connect-timeout 10 --max-time 120 \
@@ -146,7 +146,7 @@ parse_plan() {
 	awk '/^\([0-9]+\/[0-9]+\) / {
 		if ($2 !~ /^(Installing|Purging|Upgrading|Replacing)$/ || $3 !~ /^[a-zA-Z0-9][a-zA-Z0-9+_.-]*$/) exit 1
 		name = $3
-		if ($2 != "Installing" && name !~ /^(xcloud-bypass|luci-app-xcloud-bypass|dnsmasq|dnsmasq-dhcpv6)$/) exit 1
+		if ($2 != "Installing" && name !~ /^(selective-vpn|luci-app-selective-vpn|dnsmasq|dnsmasq-dhcpv6)$/) exit 1
 		if ($2 == "Purging") { print name, "-"; next }
 		v = $NF; gsub(/[()]/, "", v)
 		if (v !~ /^[a-zA-Z0-9][a-zA-Z0-9+_.~-]*$/) exit 1
@@ -306,7 +306,7 @@ recovery() {
 		set -- "$@" "$file"
 	done
 	while read -r name old_version; do
-		case "$name" in xcloud-bypass|luci-app-xcloud-bypass|dnsmasq|dnsmasq-dhcpv6|dnsmasq-full) continue ;; esac
+		case "$name" in selective-vpn|luci-app-selective-vpn|dnsmasq|dnsmasq-dhcpv6|dnsmasq-full) continue ;; esac
 		set -- "$@" "$name=$old_version"
 	done < "$backup/before"
 	# the original world removes the new package constraints before solving recovery
@@ -345,8 +345,8 @@ cleanup() {
 	fi
 	[ -z "$work" ] || rm -rf "$work"
 	if [ "$locked" -eq 1 ]; then
-		rm -f "$temporary/xcloud-bypass-install.lock/pid"
-		rmdir "$temporary/xcloud-bypass-install.lock"
+		rm -f "$temporary/selective-vpn-install.lock/pid"
+		rmdir "$temporary/selective-vpn-install.lock"
 	fi
 	exit "$result"
 }
@@ -389,23 +389,23 @@ else
 	[ -z "$version$checksum$luci_checksum" ] || die '--recover takes no release options.'
 fi
 
-work=$(mktemp -d "$temporary/xcloud-install.XXXXXXXX") || die 'Cannot create private staging.'
+work=$(mktemp -d "$temporary/selective-vpn-install.XXXXXXXX") || die 'Cannot create private staging.'
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 mkdir "$work/cache" "$work/new" "$work/old"
-if ! mkdir "$temporary/xcloud-bypass-install.lock" 2>/dev/null; then
-	safe_directory "$temporary/xcloud-bypass-install.lock" &&
-		safe_file "$temporary/xcloud-bypass-install.lock/pid" || die 'Unsafe installer lock.'
-	pid=$(cat "$temporary/xcloud-bypass-install.lock/pid")
+if ! mkdir "$temporary/selective-vpn-install.lock" 2>/dev/null; then
+	safe_directory "$temporary/selective-vpn-install.lock" &&
+		safe_file "$temporary/selective-vpn-install.lock/pid" || die 'Unsafe installer lock.'
+	pid=$(cat "$temporary/selective-vpn-install.lock/pid")
 	case "$pid" in ''|*[!0-9]*) die 'Invalid installer lock.' ;; esac
 	! kill -0 "$pid" 2>/dev/null || die 'Another installer is running.'
-	rm "$temporary/xcloud-bypass-install.lock/pid"
-	rmdir "$temporary/xcloud-bypass-install.lock"
-	mkdir "$temporary/xcloud-bypass-install.lock" || die 'Another installer is starting.'
+	rm "$temporary/selective-vpn-install.lock/pid"
+	rmdir "$temporary/selective-vpn-install.lock"
+	mkdir "$temporary/selective-vpn-install.lock" || die 'Another installer is starting.'
 fi
 locked=1
-printf '%s\n' "$$" > "$temporary/xcloud-bypass-install.lock/pid"
-lock_backend || die 'The bypass is busy or its locks are unsafe.'
+printf '%s\n' "$$" > "$temporary/selective-vpn-install.lock/pid"
+lock_backend || die 'Selective VPN is busy or its locks are unsafe.'
 if [ "$recover" -eq 1 ]; then
 	confirm 'Restore the interrupted installation?' || exit 0
 	recovery || die "Recovery stopped. Review the private files in $backup."
@@ -433,19 +433,19 @@ done
 luci='not installed'
 [ -z "$(installed_version luci-base)" ] || luci='installed'
 [ -z "$luci_checksum" ] || [ "$luci" = installed ] || die 'Install LuCI first, or omit --luci-sha256 for a backend-only installation.'
-[ "$(uci -q get xcloud-bypass.main.enabled || true)" != 1 ] || die 'Disable the bypass before upgrading it.'
-[ ! -e "$private/pending" ] && [ ! -L "$private/pending" ] || die 'Resolve the pending bypass operation before installing.'
+[ "$(uci -q get selective-vpn.main.enabled || true)" != 1 ] || die 'Disable routing before upgrading.'
+[ ! -e "$private/pending" ] && [ ! -L "$private/pending" ] || die 'Resolve the pending routing change before installing.'
 snapshot "$work/before-config" || die 'Cannot back up configuration safely.'
 cp -p "$world" "$work/world"
 check_dns
 apk_run update > "$work/repositories" 2>&1 || die 'Package repositories are unavailable or cannot be verified.'
-fetch_release xcloud-bypass "$checksum"
-[ -z "$luci_checksum" ] || fetch_release luci-app-xcloud-bypass "$luci_checksum"
-set -- "$work/new/xcloud-bypass-$version.apk"
-printf '%s\n' xcloud-bypass > "$work/targets"
+fetch_release selective-vpn "$checksum"
+[ -z "$luci_checksum" ] || fetch_release luci-app-selective-vpn "$luci_checksum"
+set -- "$work/new/selective-vpn-$version.apk"
+printf '%s\n' selective-vpn > "$work/targets"
 if [ -n "$luci_checksum" ]; then
-	set -- "$@" "$work/new/luci-app-xcloud-bypass-$version.apk"
-	printf '%s\n' luci-app-xcloud-bypass >> "$work/targets"
+	set -- "$@" "$work/new/luci-app-selective-vpn-$version.apk"
+	printf '%s\n' luci-app-selective-vpn >> "$work/targets"
 fi
 if [ "$dns_change" -eq 1 ]; then
 	set -- "$@" dnsmasq-full
@@ -516,7 +516,7 @@ install_result=0
 apk_run --no-network add "$@" > "$work/install-log" 2>&1 || install_result=$?
 snapshot "$backup/after-config" || die 'Cannot record the installation result.'
 [ "$install_result" -eq 0 ] || die 'APK installation failed.'
-[ "$(uci -q get xcloud-bypass.main.enabled || true)" != 1 ] || die 'The package unexpectedly enabled routing.'
+[ "$(uci -q get selective-vpn.main.enabled || true)" != 1 ] || die 'The package unexpectedly enabled routing.'
 for name in $saved_files; do
 	[ ! -f "$backup/before-config/$name" ] ||
 		cmp -s "$config/$name" "$backup/before-config/$name" || die 'A package script changed existing configuration.'
@@ -533,15 +533,15 @@ awk 'FILENAME == ARGV[1] { expected[$1] = $2; next }
 	{ if ($2 != expected[$1]) bad = 1; delete expected[$1] }
 	END { for (n in expected) bad = 1; exit bad }' \
 	"$work/before" "$work/allowed" "$work/after" || die 'Installed packages do not match the confirmed proposal.'
-[ "$(awk '$1 == "xcloud-bypass" { print $2 }' "$work/after")" = "$version" ] || die 'The requested backend version was not installed.'
+[ "$(awk '$1 == "selective-vpn" { print $2 }' "$work/after")" = "$version" ] || die 'The requested backend version was not installed.'
 if [ -n "$luci_checksum" ]; then
-	[ "$(awk '$1 == "luci-app-xcloud-bypass" { print $2 }' "$work/after")" = "$version" ] || die 'The requested LuCI version was not installed.'
+	[ "$(awk '$1 == "luci-app-selective-vpn" { print $2 }' "$work/after")" = "$version" ] || die 'The requested LuCI version was not installed.'
 fi
 cp -p "$work/after" "$backup/installed"
 rm "$backup/armed"
 sync
 armed=0
-printf '%s\n' 'Installation completed. Configure the bypass before enabling it.'
+printf '%s\n' 'Installation completed. Configure routing before enabling it.'
 if [ -n "$luci_checksum" ]; then
-	printf '%s\n' 'Open Services > xCloud Bypass in LuCI.'
+	printf '%s\n' 'Open Services > Selective VPN in LuCI.'
 fi

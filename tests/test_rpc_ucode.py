@@ -8,17 +8,17 @@ import unittest
 
 PLUGIN = (
     Path(__file__).resolve().parents[1]
-    / "luci-app-xcloud-bypass/root/usr/share/rpcd/ucode/xcloud-bypass"
+    / "luci-app-selective-vpn/root/usr/share/rpcd/ucode/selective-vpn"
 )
-UCODE = shlex.split(os.environ.get("XCB_TEST_UCODE", ""))
+UCODE = shlex.split(os.environ.get("SVPN_TEST_UCODE", ""))
 
 
 @unittest.skipUnless(
-    UCODE, "set XCB_TEST_UCODE to a ucode runtime with fs/uloop"
+    UCODE, "set SVPN_TEST_UCODE to a ucode runtime with fs/uloop"
 )
 class UcodeRpcTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="xcloud-ucode-")
+        self.temp = tempfile.TemporaryDirectory(prefix="selective-vpn-ucode-")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.worker = self.root / "worker"
@@ -36,8 +36,8 @@ class UcodeRpcTests(unittest.TestCase):
         self.plugin = self.root / "plugin.uc"
         self.plugin.write_text(
             PLUGIN.read_text()
-            .replace("/usr/lib/xcloud-bypass/rpc-bridge", str(self.worker))
-            .replace("/tmp/xcloud-rpc.", str(self.root / "stage."))
+            .replace("/usr/lib/selective-vpn/rpc-bridge", str(self.worker))
+            .replace("/tmp/selective-vpn-rpc.", str(self.root / "stage."))
         )
 
     def run_ucode(self, body):
@@ -47,9 +47,11 @@ class UcodeRpcTests(unittest.TestCase):
             "import { glob } from 'fs';\n"
             "uloop.init();\n"
             f"let api = loadfile({json.dumps(str(self.plugin))})();\n"
-            "api = api['xcloud-bypass'];\n"
+            "api = api['selective-vpn'];\n"
             "function check(value) { if (!value) die('assertion failed'); }\n"
-            + body.replace("/tmp/xcloud-rpc.", str(self.root / "stage."))
+            + body.replace(
+                "/tmp/selective-vpn-rpc.", str(self.root / "stage.")
+            )
         )
         result = subprocess.run(
             [*UCODE, str(script)], capture_output=True, timeout=10
@@ -59,7 +61,7 @@ class UcodeRpcTests(unittest.TestCase):
     def test_jobs_complete_without_blocking_and_clean_staging(self):
         self.run_ucode(
             """
-            let before = glob('/tmp/xcloud-rpc.*');
+            let before = glob('/tmp/selective-vpn-rpc.*');
             let answer = api.apply.call({ args: { mode: 'managed' } });
             check(answer.ok && answer.job);
             let first = api.job.call({ args: { id: answer.job } });
@@ -71,7 +73,7 @@ class UcodeRpcTests(unittest.TestCase):
             check(responsive);
             let done = api.job.call({ args: { id: answer.job } });
             check(done.state == 'complete' && done.result.ok);
-            check(length(glob('/tmp/xcloud-rpc.*')) == length(before));
+            check(length(glob('/tmp/selective-vpn-rpc.*')) == length(before));
             """
         )
 
@@ -98,14 +100,14 @@ class UcodeRpcTests(unittest.TestCase):
         )
         self.run_ucode(
             """
-            let before = glob('/tmp/xcloud-rpc.*');
+            let before = glob('/tmp/selective-vpn-rpc.*');
             let args = { password: 'secret' };
             let answer = api.set_credentials.call({ args });
             uloop.timer(600, () => uloop.end());
             uloop.run();
             let done = api.job.call({ args: { id: answer.job } });
             check(!done.result.ok && index(done.result.error, 'secret') < 0);
-            check(length(glob('/tmp/xcloud-rpc.*')) == length(before));
+            check(length(glob('/tmp/selective-vpn-rpc.*')) == length(before));
             """
         )
 
@@ -116,12 +118,12 @@ class UcodeRpcTests(unittest.TestCase):
         )
         self.run_ucode(
             """
-            let before = glob('/tmp/xcloud-rpc.*');
+            let before = glob('/tmp/selective-vpn-rpc.*');
             let answer = api.status.call({ args: {} });
             uloop.timer(1800, () => uloop.end());
             uloop.run();
             let done = api.job.call({ args: { id: answer.job } });
             check(done.state == 'complete' && !done.result.ok);
-            check(length(glob('/tmp/xcloud-rpc.*')) == length(before));
+            check(length(glob('/tmp/selective-vpn-rpc.*')) == length(before));
             """
         )

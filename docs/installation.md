@@ -1,6 +1,6 @@
 # Installation
 
-Release packages have not been published yet. There is no public installation command to run at this point. The current development artifacts still use the previous package and CLI names; the commands below apply only to those artifacts.
+Release packages have not been published yet. There is no public installation command to run at this point. The commands below apply to local development builds.
 
 ## Local test installation
 
@@ -24,15 +24,15 @@ Transfer the entire `dist/v0.1.0-r1` directory to `/tmp/selective-vpn-test` on t
 ```sh
 cd /tmp/selective-vpn-test
 sha256sum -c SHA256SUMS
-cp xcloud-bypass.pub.pem /etc/apk/keys/xcloud-bypass.pem
-chmod 644 /etc/apk/keys/xcloud-bypass.pem
-apk verify xcloud-bypass-0.1.0-r1.apk
-apk verify luci-app-xcloud-bypass-0.1.0-r1.apk
-apk add --simulate ./xcloud-bypass-0.1.0-r1.apk ./luci-app-xcloud-bypass-0.1.0-r1.apk
-apk add ./xcloud-bypass-0.1.0-r1.apk ./luci-app-xcloud-bypass-0.1.0-r1.apk
+cp selective-vpn.pub.pem /etc/apk/keys/selective-vpn.pem
+chmod 644 /etc/apk/keys/selective-vpn.pem
+apk verify selective-vpn-0.1.0-r1.apk
+apk verify luci-app-selective-vpn-0.1.0-r1.apk
+apk add --simulate ./selective-vpn-0.1.0-r1.apk ./luci-app-selective-vpn-0.1.0-r1.apk
+apk add ./selective-vpn-0.1.0-r1.apk ./luci-app-selective-vpn-0.1.0-r1.apk
 ```
 
-Review the simulated dependency changes before running the final `apk add`. The packages start with routing disabled. Open the installed application under **Services** in LuCI, or run the current `xcloud-bypass setup` command as root over SSH. The [VPN](vpn.md), [routing](routing.md) and [diagnostics](diagnostics.md) pages explain setup and confirmation. Remove the disposable test key from the build machine when finished; do not reuse it for a public release.
+Review the simulated dependency changes before running the final `apk add`. The packages start with routing disabled. Open the installed application under **Services** in LuCI, or run the current `selective-vpn setup` command as root over SSH. The [VPN](vpn.md), [routing](routing.md) and [diagnostics](diagnostics.md) pages explain setup and confirmation. Remove the disposable test key from the build machine when finished; do not reuse it for a public release.
 
 ## Versioned release installer
 
@@ -54,7 +54,7 @@ Client DNS must still pass through the integrated resolver when using domain rou
 
 ## Recovery
 
-Private backups and package history are stored in `/etc/xcloud-bypass-install`, readable only by root. Ordinary installation failures attempt to restore the previous application and DNS packages, configuration, and APK world constraints. Newly installed dependencies may remain.
+Private backups and package history are stored in `/etc/selective-vpn-install`, readable only by root. Ordinary installation failures attempt to restore the previous application and DNS packages, configuration, and APK world constraints. Newly installed dependencies may remain.
 
 After an interrupted installation, run:
 
@@ -68,11 +68,11 @@ Installer tests use simulated router commands. Installation, upgrades, and resol
 
 ## Uninstall
 
-Run the current `xcloud-bypass uninstall` command as root, then check SSH and LuCI access and confirm the pending removal before its 120-second deadline. This removes application-owned configuration while retaining unrelated VPN clients and dependencies. Once it completes, remove the LuCI package first, then the core package:
+Run the current `selective-vpn uninstall` command as root, then check SSH and LuCI access and confirm the pending removal before its 120-second deadline. This removes application-owned configuration while retaining unrelated VPN clients and dependencies. Once it completes, remove the LuCI package first, then the core package:
 
 ```sh
-apk del luci-app-xcloud-bypass
-apk del xcloud-bypass
+apk del luci-app-selective-vpn
+apk del selective-vpn
 ```
 
 Direct core package removal is refused while an owned active configuration or pending change exists. Keep the router backup until you have checked DNS, WAN and unrelated PBR policies. Inspect the package proposal before accepting dependency removal.

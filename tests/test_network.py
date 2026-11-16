@@ -9,7 +9,7 @@ import test_transaction as recovery
 
 PIN = ":".join(["AB"] * 32)
 PROFILE = f"""client
-dev tun_xc0
+dev tun_sv0
 dev-type tun
 remote vpn.example 1194 udp
 peer-fingerprint {PIN}
@@ -89,7 +89,7 @@ class NetworkTests(unittest.TestCase):
         self.leases = self.root / "dhcp.leases"
         self.write(
             self.leases,
-            "0 aa:bb:cc:dd:ee:ff 192.168.8.12 xbox client\n",
+            "0 aa:bb:cc:dd:ee:ff 192.168.8.12 device client\n",
             0o644,
         )
         common = self.f.library / "common.sh"
@@ -106,10 +106,10 @@ class NetworkTests(unittest.TestCase):
         self.setup = (
             self.f.setup_shell
             + """
-            . "$XCB_LIBRARY_DIR/profile.sh"; . "$XCB_LIBRARY_DIR/discover.sh"
-            . "$XCB_LIBRARY_DIR/network.sh"
+            . "$SVPN_LIBRARY_DIR/profile.sh"; . "$SVPN_LIBRARY_DIR/discover.sh"
+            . "$SVPN_LIBRARY_DIR/network.sh"
             ubus() { cat "$test_root/live.json"; }
-            xcb_json_field() { python3 "$test_root/jsonfilter_fixture.py" "$@\
+            svpn_json_field() { python3 "$test_root/jsonfilter_fixture.py" "$@\
 "; }
         """
         )
@@ -149,7 +149,7 @@ class NetworkTests(unittest.TestCase):
         **kwargs,
     ):
         return self.call(
-            'xcb_network_prepare "$@"',
+            'svpn_network_prepare "$@"',
             mode,
             selection,
             networks,
@@ -185,17 +185,17 @@ class NetworkTests(unittest.TestCase):
         self.assertEqual(
             set(p.name for p in (plan / "resources").iterdir()),
             {
-                "network.xcloud_vpn",
-                "openvpn.xcloud_client",
-                "firewall.xcloud_zone",
-                "firewall.xcloud_fwd_lan",
+                "network.svpn_vpn",
+                "openvpn.svpn_client",
+                "firewall.svpn_zone",
+                "firewall.svpn_fwd_lan",
             },
         )
-        network = (plan / "resources/network.xcloud_vpn").read_text()
+        network = (plan / "resources/network.svpn_vpn").read_text()
         self.assertIn("proto 'none'", network)
         self.assertNotIn("device", network)
         self.assertNotIn("ipaddr", network)
-        zone = (plan / "resources/firewall.xcloud_zone").read_text()
+        zone = (plan / "resources/firewall.svpn_zone").read_text()
         self.assertIn("input 'REJECT'", zone)
         self.assertIn("family 'ipv4'", zone)
         self.assertIn("masq '1'", zone)
@@ -213,7 +213,7 @@ class NetworkTests(unittest.TestCase):
         self.assertEqual(
             (plan / "sources").read_text(), "10.20.0.0/24\n192.168.8.0/24\n"
         )
-        self.assertTrue((plan / "resources/firewall.xcloud_fwd_iot").exists())
+        self.assertTrue((plan / "resources/firewall.svpn_fwd_iot").exists())
         self.live[0]["ipv4-address"][0] = dict(address="172.19.4.1", mask=23)
         self.save_live()
         self.assertEqual(
@@ -221,12 +221,14 @@ class NetworkTests(unittest.TestCase):
         )
 
     def test_devices_resolve_dhcp_without_dns_and_deduplicate(self):
-        plan = self.plan(devices="XBOX 192.168.8.12 192.168.8.15")
+        plan = self.plan(devices="DEVICE 192.168.8.12 192.168.8.15")
         self.assertEqual((plan / "scope").read_text(), "devices\n")
         self.assertEqual(
             (plan / "sources").read_text(), "192.168.8.12\n192.168.8.15\n"
         )
-        self.assertEqual((plan / "leases").read_text(), "192.168.8.12\txbox\n")
+        self.assertEqual(
+            (plan / "leases").read_text(), "192.168.8.12\tdevice\n"
+        )
         plan = self.plan(devices=" \t\n")
         self.assertEqual((plan / "scope").read_text(), "lan\n")
 
@@ -308,7 +310,7 @@ class NetworkTests(unittest.TestCase):
 
     def external(self, *, safe=True):
         profile = self.root / "external.ovpn"
-        self.write(profile, PROFILE.replace("tun_xc0", "tun_user"))
+        self.write(profile, PROFILE.replace("tun_sv0", "tun_user"))
         self.write(
             self.config / "openvpn",
             f"config openvpn 'personal'\n option enabled '1'\n option config \
@@ -393,13 +395,13 @@ class NetworkTests(unittest.TestCase):
     def test_vpn_device_and_reserved_section_collisions(self):
         self.append(
             "openvpn",
-            "config openvpn 'other'\n option enabled '0'\n option dev 'tun_xc\
+            "config openvpn 'other'\n option enabled '0'\n option dev 'tun_sv\
 0'\n",
         )
         self.reject()
         self.write(self.config / "openvpn", "", 0o644)
         self.append(
-            "network", "config interface 'xcloud_vpn'\n option proto 'none'\n"
+            "network", "config interface 'svpn_vpn'\n option proto 'none'\n"
         )
         self.reject()
 
@@ -446,15 +448,15 @@ class NetworkTests(unittest.TestCase):
     def test_generated_resources_queue_then_rollback(self):
         plan = self.plan()
         identifier = self.f.begin()
-        self.call('xcb_network_enqueue "$@"', identifier, str(plan))
+        self.call('svpn_network_enqueue "$@"', identifier, str(plan))
         self.assertEqual(
             len(list((self.f.txdir(identifier) / "changes").iterdir())), 4
         )
         self.f.arm_apply(identifier)
         self.assertIn("proto 'none'", (self.config / "network").read_text())
         self.f.invoke("rollback", identifier)
-        self.assertNotIn("xcloud_", (self.config / "network").read_text())
-        self.assertNotIn("xcloud_", (self.config / "firewall").read_text())
+        self.assertNotIn("svpn_", (self.config / "network").read_text())
+        self.assertNotIn("svpn_", (self.config / "firewall").read_text())
         self.assertEqual((self.f.bundle / "client.ovpn").read_text(), PROFILE)
 
     def test_reapply_uses_confirmed_ownership_and_preserves_unrelated_edits(
@@ -462,17 +464,17 @@ class NetworkTests(unittest.TestCase):
     ):
         plan = self.plan()
         identifier = self.f.begin()
-        self.call('xcb_network_enqueue "$@"', identifier, str(plan))
+        self.call('svpn_network_enqueue "$@"', identifier, str(plan))
         self.f.arm_apply(identifier)
         self.f.confirm(identifier)
         self.append(
             "network", "config interface 'other'\n option proto 'dhcp'\n"
         )
         plan = self.plan()
-        self.assertTrue((plan / "resources/firewall.xcloud_zone").exists())
-        self.assertTrue((plan / "resources/firewall.xcloud_fwd_lan").exists())
+        self.assertTrue((plan / "resources/firewall.svpn_zone").exists())
+        self.assertTrue((plan / "resources/firewall.svpn_fwd_lan").exists())
         identifier = self.f.begin()
-        self.call('xcb_network_enqueue "$@"', identifier, str(plan))
+        self.call('svpn_network_enqueue "$@"', identifier, str(plan))
         self.f.arm_apply(identifier)
         self.f.invoke("rollback", identifier)
         self.assertIn(
@@ -484,10 +486,10 @@ class NetworkTests(unittest.TestCase):
         switched = self.plan(mode="external", selection="personal")
         self.assertIn(
             "list network 'vpnuser'",
-            (switched / "resources/firewall.xcloud_zone").read_text(),
+            (switched / "resources/firewall.svpn_zone").read_text(),
         )
         self.assertTrue(
-            (switched / "resources/firewall.xcloud_fwd_lan").exists()
+            (switched / "resources/firewall.svpn_fwd_lan").exists()
         )
         self.write(
             self.config / "network",
@@ -505,7 +507,7 @@ class NetworkTests(unittest.TestCase):
         )
         identifier = self.f.begin()
         result = self.call(
-            'xcb_network_enqueue "$@"', identifier, str(plan), check=False
+            'svpn_network_enqueue "$@"', identifier, str(plan), check=False
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(
@@ -564,7 +566,7 @@ class NetworkTests(unittest.TestCase):
         self.assertNotIn(b"/tmp/other", result.stderr)
 
     def test_kernel_and_standalone_device_collisions(self):
-        device = self.root / "sysnet/tun_xc0"
+        device = self.root / "sysnet/tun_sv0"
         device.mkdir(parents=True)
         self.reject()
         device.rmdir()
@@ -593,11 +595,11 @@ class NetworkTests(unittest.TestCase):
         plan = self.plan()
         self.assertNotEqual(
             self.call(
-                'xcb_network_discard "$@"', str(self.f.store), check=False
+                'svpn_network_discard "$@"', str(self.f.store), check=False
             ).returncode,
             0,
         )
-        self.call('xcb_network_discard "$@"', str(plan))
+        self.call('svpn_network_discard "$@"', str(plan))
         self.assertFalse(plan.exists())
         for index in range(8):
             (self.f.runtime / f"network.{index:08d}").mkdir(mode=0o700)
@@ -606,19 +608,19 @@ class NetworkTests(unittest.TestCase):
     def test_external_attachment_preserves_address_and_uses_link_ext(self):
         plan = self.plan()
         identifier = self.f.begin()
-        self.call('xcb_network_enqueue "$@"', identifier, str(plan))
+        self.call('svpn_network_enqueue "$@"', identifier, str(plan))
         self.f.arm_apply(identifier)
-        device = self.root / "sysnet/tun_xc0"
+        device = self.root / "sysnet/tun_sv0"
         device.mkdir(parents=True)
         self.write(device / "tun_flags", "0x1001\n")
         self.write(
             self.root / "vpn-address",
-            "5: tun_xc0 inet 10.9.0.2/24 scope global tun_xc0\n",
+            "5: tun_sv0 inet 10.9.0.2/24 scope global tun_sv0\n",
         )
         extra = r"""
-            xcb_ip() {
+            svpn_ip() {
                 if [ "$1" = -4 ]; then cat "$test_root/vpn-address"
-                else printf '5: tun_xc0: <POINTOPOINT,UP,LOWER_UP>\n'; fi
+                else printf '5: tun_sv0: <POINTOPOINT,UP,LOWER_UP>\n'; fi
             }
             ubus() {
                 printf '%s\n' "$@" > "$test_root/attach-call"
@@ -628,27 +630,27 @@ class NetworkTests(unittest.TestCase):
             }
         """
         self.call(
-            'xcb_vpn_attach "$@"',
+            'svpn_vpn_attach "$@"',
             identifier,
-            "xcloud_vpn",
-            "tun_xc0",
+            "svpn_vpn",
+            "tun_sv0",
             extra=extra,
         )
         invocation = (self.root / "attach-call").read_text().splitlines()
         self.assertEqual(
             invocation[:5],
-            ["-t", "5", "call", "network.interface.xcloud_vpn", "add_device"],
+            ["-t", "5", "call", "network.interface.svpn_vpn", "add_device"],
         )
         self.assertEqual(
-            json.loads(invocation[5]), {"name": "tun_xc0", "link-ext": True}
+            json.loads(invocation[5]), {"name": "tun_sv0", "link-ext": True}
         )
         (self.root / "lose-address").touch()
         self.assertNotEqual(
             self.call(
-                'xcb_vpn_attach "$@"',
+                'svpn_vpn_attach "$@"',
                 identifier,
-                "xcloud_vpn",
-                "tun_xc0",
+                "svpn_vpn",
+                "tun_sv0",
                 extra=extra,
                 check=False,
             ).returncode,
@@ -656,10 +658,10 @@ class NetworkTests(unittest.TestCase):
         )
         self.assertNotEqual(
             self.call(
-                'xcb_vpn_attach "$@"',
+                'svpn_vpn_attach "$@"',
                 identifier,
                 "lan",
-                "tun_xc0",
+                "tun_sv0",
                 extra=extra,
                 check=False,
             ).returncode,

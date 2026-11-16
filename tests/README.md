@@ -14,7 +14,7 @@ node --test tests/luci_test.cjs
 With ucode and its fs and uloop modules installed:
 
 ```sh
-XCB_TEST_UCODE=ucode python3 -m unittest tests.test_rpc_ucode -v
+SVPN_TEST_UCODE=ucode python3 -m unittest tests.test_rpc_ucode -v
 ```
 
 With Ruff installed, check Python lint:

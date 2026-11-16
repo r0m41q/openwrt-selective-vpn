@@ -22,27 +22,27 @@ if [ ! -f "$archive" ]; then
 fi
 printf '%s  %s\n' "$sdk_hash" "$archive" | sha256sum -c -
 if [ ! -x "$sdk/staging_dir/host/bin/apk" ] ||
-   [ "$(cat "$sdk/.xcloud-sdk-hash" 2>/dev/null || :)" != "$sdk_hash" ]; then
+   [ "$(cat "$sdk/.selective-vpn-sdk-hash" 2>/dev/null || :)" != "$sdk_hash" ]; then
 	rm -rf "$sdk"
 	mkdir -p "$sdk"
 	tar --zstd -xf "$archive" -C "$sdk" --strip-components=1
-	printf '%s\n' "$sdk_hash" > "$sdk/.xcloud-sdk-hash"
+	printf '%s\n' "$sdk_hash" > "$sdk/.selective-vpn-sdk-hash"
 fi
 
 apk="$sdk/staging_dir/host/bin/apk"
-for name in xcloud-bypass luci-app-xcloud-bypass; do
+for name in selective-vpn luci-app-selective-vpn; do
 	rm -rf "$sdk/package/$name"
 	cp -a "$root/$name" "$sdk/package/$name"
 done
 
 make -C "$sdk" defconfig > "$root/build/defconfig.log" 2>&1
-for name in xcloud-bypass luci-app-xcloud-bypass; do
+for name in selective-vpn luci-app-selective-vpn; do
 	(cd "$sdk" && make -C "package/$name" TOPDIR="$sdk" clean) > "$root/build/$name-clean.log" 2>&1
 	(cd "$sdk" && make -C "package/$name" TOPDIR="$sdk" V=s) > "$root/build/$name.log" 2>&1
 done
 
-version=$(awk -F:= '/^PKG_VERSION:=/ { version = $2 } /^PKG_RELEASE:=/ { release = $2 } END { print version "-r" release }' "$root/xcloud-bypass/Makefile")
-other=$(awk -F:= '/^PKG_VERSION:=/ { version = $2 } /^PKG_RELEASE:=/ { release = $2 } END { print version "-r" release }' "$root/luci-app-xcloud-bypass/Makefile")
+version=$(awk -F:= '/^PKG_VERSION:=/ { version = $2 } /^PKG_RELEASE:=/ { release = $2 } END { print version "-r" release }' "$root/selective-vpn/Makefile")
+other=$(awk -F:= '/^PKG_VERSION:=/ { version = $2 } /^PKG_RELEASE:=/ { release = $2 } END { print version "-r" release }' "$root/luci-app-selective-vpn/Makefile")
 [ "$version" = "$other" ] || { printf '%s\n' 'Package versions differ.' >&2; exit 1; }
 
 if [ -n "$sign_key" ]; then
@@ -52,33 +52,33 @@ else
 	output="$root/build/release-check/v$version"
 fi
 mkdir -p "$output"
-for name in xcloud-bypass luci-app-xcloud-bypass; do
+for name in selective-vpn luci-app-selective-vpn; do
 	source="$sdk/bin/packages/x86_64/base/$name-$version.apk"
 	[ -f "$source" ] || { printf 'Missing APK: %s\n' "$source" >&2; exit 1; }
 	cp "$source" "$output/$name-$version.apk"
 done
 
 if [ -n "$sign_key" ]; then
-	for name in xcloud-bypass luci-app-xcloud-bypass; do
+	for name in selective-vpn luci-app-selective-vpn; do
 		"$apk" --allow-untrusted adbsign --sign-key "$sign_key" "$output/$name-$version.apk"
 	done
-	openssl pkey -in "$sign_key" -pubout -out "$output/xcloud-bypass.pub.pem"
-	chmod 644 "$output/xcloud-bypass.pub.pem"
+	openssl pkey -in "$sign_key" -pubout -out "$output/selective-vpn.pub.pem"
+	chmod 644 "$output/selective-vpn.pub.pem"
 	keys="$root/build/release-keys"
 	mkdir -p "$keys"
-	cp "$output/xcloud-bypass.pub.pem" "$keys/xcloud-bypass.pem"
-	for name in xcloud-bypass luci-app-xcloud-bypass; do
+	cp "$output/selective-vpn.pub.pem" "$keys/selective-vpn.pem"
+	for name in selective-vpn luci-app-selective-vpn; do
 		"$apk" --keys-dir "$keys" verify "$output/$name-$version.apk"
 	done
-	openssl pkey -pubin -in "$output/xcloud-bypass.pub.pem" -outform DER | sha256sum | cut -d ' ' -f 1 > "$output/KEY-FINGERPRINT"
+	openssl pkey -pubin -in "$output/selective-vpn.pub.pem" -outform DER | sha256sum | cut -d ' ' -f 1 > "$output/KEY-FINGERPRINT"
 fi
 
 python3 "$root/scripts/check-apks.py" "$apk" "$root" "$output" "$version"
 cp "$root/install.sh" "$root/LICENSE" "$output/"
 if [ -n "$sign_key" ]; then
-	(cd "$output" && sha256sum "xcloud-bypass-$version.apk" "luci-app-xcloud-bypass-$version.apk" install.sh LICENSE xcloud-bypass.pub.pem KEY-FINGERPRINT > SHA256SUMS)
+	(cd "$output" && sha256sum "selective-vpn-$version.apk" "luci-app-selective-vpn-$version.apk" install.sh LICENSE selective-vpn.pub.pem KEY-FINGERPRINT > SHA256SUMS)
 else
-	(cd "$output" && sha256sum "xcloud-bypass-$version.apk" "luci-app-xcloud-bypass-$version.apk" install.sh LICENSE > SHA256SUMS)
+	(cd "$output" && sha256sum "selective-vpn-$version.apk" "luci-app-selective-vpn-$version.apk" install.sh LICENSE > SHA256SUMS)
 fi
 chmod 644 "$output"/*.apk "$output/install.sh" "$output/LICENSE" "$output/SHA256SUMS"
 printf 'Built %s\n' "$output"

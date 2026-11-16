@@ -43,11 +43,11 @@ class IntegrationTests(unittest.TestCase):
         case.call("confirm", identifier)
         active = pbr.read_text()
         self.assertIn("policy 'personal'", active)
-        self.assertIn("policy 'xcloud_console'", active)
+        self.assertIn("policy 'svpn_console'", active)
         self.assertIn("option src_addr '192.168.8.0/24'", active)
         self.assertIn("option proto 'tcp'", active)
         self.assertIn("option dest_port '443'", active)
-        self.assertNotIn("policy 'xcloud_browser'", active)
+        self.assertNotIn("policy 'svpn_browser'", active)
         self.assertTrue((case.root / "pbr.dnsmasq").exists())
 
         reconnect = (
@@ -70,7 +70,7 @@ class IntegrationTests(unittest.TestCase):
         disabled = case.call("disable", "192.168.8.2").stdout.decode().strip()
         case.call("confirm", disabled)
         self.assertIn("policy 'personal'", pbr.read_text())
-        self.assertNotIn("policy 'xcloud_console'", pbr.read_text())
+        self.assertNotIn("policy 'svpn_console'", pbr.read_text())
         self.assertFalse((case.root / "vpn-running").exists())
         self.assertEqual((case.root / "routes4").read_bytes(), original_route)
         self.assertEqual((case.root / "routes6").read_bytes(), original_ipv6)
@@ -78,7 +78,7 @@ class IntegrationTests(unittest.TestCase):
         removed = case.call("uninstall", "192.168.8.2").stdout.decode().strip()
         case.call("confirm", removed)
         self.assertIn("policy 'personal'", pbr.read_text())
-        self.assertNotIn("xcloud_", pbr.read_text())
+        self.assertNotIn("svpn_", pbr.read_text())
 
     def test_external_policy_keeps_its_interface(self):
         case = test_lifecycle.LifecycleTests(methodName="runTest")
@@ -135,7 +135,7 @@ class IntegrationTests(unittest.TestCase):
         case.call("confirm", repeated)
         self.assertIn("policy 'personal'", pbr.read_text())
         self.assertIn("supported_interface 'vpnuser'", pbr.read_text())
-        self.assertNotIn("policy 'xcloud_console'", pbr.read_text())
+        self.assertNotIn("policy 'svpn_console'", pbr.read_text())
         self.assertTrue((case.root / "external-running").exists())
         self.assertEqual(profile.read_bytes(), before)
 
@@ -160,7 +160,7 @@ class IntegrationTests(unittest.TestCase):
                 "uci",
                 "apk",
                 "fw4",
-                "xcloud-bypass",
+                "selective-vpn",
             ):
                 (bin_dir / name).symlink_to(command)
             environment = os.environ.copy()

@@ -23,7 +23,7 @@ class LifecycleTests(unittest.TestCase):
         self.root = self.f.root
         self.write = self.f.write
         self.write(
-            self.f.config / "xcloud-bypass",
+            self.f.config / "selective-vpn",
             "config settings 'main'\n option enabled '0'\n",
             0o644,
         )
@@ -36,7 +36,7 @@ proto kernel scope link\n"
             "routes6": (
                 "default via fe80::1 dev eth1 metric 512 expires 100sec\n"
             ),
-            "tables": "256 pbr_xcloud_vpn\n",
+            "tables": "256 pbr_svpn_vpn\n",
             "pid": str(os.getpid()),
         }.items():
             self.write(
@@ -54,7 +54,7 @@ proto kernel scope link\n"
         (proc / str(os.getpid()) / "exe").symlink_to("/usr/sbin/openvpn")
         self.write(
             proc / str(os.getpid()) / "cmdline",
-            "/usr/sbin/openvpn\0--dev\0tun_xc0\0",
+            "/usr/sbin/openvpn\0--dev\0tun_sv0\0",
         )
         bindir = self.root / "bin"
         init = self.root / "init"
@@ -87,11 +87,11 @@ ice {name} "$@"\n',
         common = self.f.library / "common.sh"
         value = common.read_text()
         for key, path in {
-            "XCB_INIT_DIR": init,
-            "XCB_PROC_DIR": proc,
-            "XCB_RT_TABLES": self.root / "tables",
-            "XCB_PBR_DNS": self.root / "pbr.dnsmasq",
-            "XCB_IP": bindir / "ip",
+            "SVPN_INIT_DIR": init,
+            "SVPN_PROC_DIR": proc,
+            "SVPN_RT_TABLES": self.root / "tables",
+            "SVPN_PBR_DNS": self.root / "pbr.dnsmasq",
+            "SVPN_IP": bindir / "ip",
         }.items():
             value = re.sub(
                 rf"readonly {key}='[^']*'", f"readonly {key}='{path}'", value
@@ -100,7 +100,7 @@ ice {name} "$@"\n',
         runner = self.f.library / "service-run"
         runner.write_text(
             runner.read_text().replace(
-                ". /usr/lib/xcloud-bypass/common.sh",
+                ". /usr/lib/selective-vpn/common.sh",
                 ". " + shlex.quote(str(common)),
             )
         )
@@ -116,7 +116,7 @@ ice {name} "$@"\n',
             + """
             umask 077
             for library in profile discover network policy routing runtime \\
- lifecycle; do . "$XCB_LIBRARY_DIR/$library.sh"; done
+ lifecycle; do . "$SVPN_LIBRARY_DIR/$library.sh"; done
         """
         )
         with self.f.shim.open("a") as stream:
@@ -130,7 +130,7 @@ ice {name} "$@"\n',
             *recovery.SHELL,
             "-eu",
             "-c",
-            self.setup + extra + 'xcb_lifecycle "$@"',
+            self.setup + extra + 'svpn_lifecycle "$@"',
             "lifecycle",
             str(self.f.library),
             operation,
@@ -189,7 +189,7 @@ ice {name} "$@"\n',
 
     def test_apply_confirm_disable_enable_and_uninstall(self):
         identifier = self.activate()
-        self.assertIn("xcloud_console", (self.f.config / "pbr").read_text())
+        self.assertIn("svpn_console", (self.f.config / "pbr").read_text())
         self.assertEqual(
             (self.f.store / "confirmed").read_text().strip(), identifier
         )
@@ -197,7 +197,7 @@ ice {name} "$@"\n',
             self.call("disable", "192.168.8.2").stdout.decode().strip()
         )
         self.call("confirm", identifier)
-        self.assertNotIn("xcloud_console", (self.f.config / "pbr").read_text())
+        self.assertNotIn("svpn_console", (self.f.config / "pbr").read_text())
         self.assertFalse((self.root / "vpn-running").exists())
         identifier = self.call("enable", "192.168.8.2").stdout.decode().strip()
         self.call("confirm", identifier)
@@ -210,9 +210,9 @@ ice {name} "$@"\n',
             "firewall",
             "openvpn",
             "pbr",
-            "xcloud-bypass",
+            "selective-vpn",
         ):
-            self.assertNotIn("xcloud_", (self.f.config / package).read_text())
+            self.assertNotIn("svpn_", (self.f.config / package).read_text())
         self.assertTrue((self.f.bundle / "credentials").exists())
         self.assertNotIn(
             "openvpn stop personal", (self.root / "calls").read_text()
@@ -292,7 +292,7 @@ ice {name} "$@"\n',
         ]
         self.assertEqual(
             mutations,
-            ["openvpn stop xcloud_client", "openvpn start xcloud_client"],
+            ["openvpn stop svpn_client", "openvpn start svpn_client"],
         )
         before = calls.read_text()
         self.assertNotEqual(
@@ -301,7 +301,7 @@ ice {name} "$@"\n',
         self.assertEqual(
             [
                 line
-                for line in calls.read_text()[len(before):].splitlines()
+                for line in calls.read_text()[len(before) :].splitlines()
                 if line.startswith("openvpn ")
             ],
             [],
@@ -316,9 +316,9 @@ ice {name} "$@"\n',
             self.call("reconnect", "192.168.8.2", check=False).returncode, 0
         )
         self.write(
-            self.f.config / "xcloud-bypass",
+            self.f.config / "selective-vpn",
             "config settings 'main'\n option enabled '1'\n"
-            "config settings 'xcloud_active'\n option mode 'external'\n",
+            "config settings 'svpn_active'\n option mode 'external'\n",
             0o644,
         )
         self.assertNotEqual(
@@ -366,7 +366,7 @@ ice {name} "$@"\n',
                 "firewall",
                 "openvpn",
                 "pbr",
-                "xcloud-bypass",
+                "selective-vpn",
             )
         }
         identifier = (
@@ -400,7 +400,7 @@ ice {name} "$@"\n',
         (self.root / "fail-pbr-reload").touch()
         result = self.apply(check=False)
         self.assertNotEqual(result.returncode, 0)
-        self.assertNotIn("xcloud_console", (self.f.config / "pbr").read_text())
+        self.assertNotIn("svpn_console", (self.f.config / "pbr").read_text())
         self.assertFalse(
             (self.f.store / "pending").exists(), result.stderr.decode()
         )
@@ -416,7 +416,7 @@ ice {name} "$@"\n',
         (self.root / "no-address").touch()
         self.assertNotEqual(self.apply(check=False).returncode, 0)
         self.assertFalse((self.f.store / "pending").exists())
-        self.assertNotIn("xcloud_console", (self.f.config / "pbr").read_text())
+        self.assertNotIn("svpn_console", (self.f.config / "pbr").read_text())
 
     def test_boot_recovers_when_the_detached_watchdog_is_lost(self):
         identifier = self.apply().stdout.decode().strip()
@@ -456,7 +456,7 @@ ice {name} "$@"\n',
         self.call("boot")
         self.assertEqual((self.root / "calls").read_bytes(), before)
         self.assertFalse((self.f.store / "pending").exists())
-        self.assertNotIn("xcloud_console", (self.f.config / "pbr").read_text())
+        self.assertNotIn("svpn_console", (self.f.config / "pbr").read_text())
         self.assertNotIn("/var/run/pbr.dnsmasq", path.read_text())
         self.assertIn("name 'later'", path.read_text())
         self.assertEqual(path.stat().st_mode & 0o777, 0o644)
@@ -504,7 +504,7 @@ ion interface 'wan'\n option dest_addr '198.51.100.20'\n"
         self.call("confirm", identifier)
         self.assertIn("policy 'personal'", path.read_text())
         self.assertIn("option enabled '1'", path.read_text())
-        self.assertNotIn("xcloud_console", path.read_text())
+        self.assertNotIn("svpn_console", path.read_text())
         self.assertTrue((self.root / "pbr-running").exists())
 
     def test_timeout_reloads_services_after_configuration_rollback(self):
@@ -518,7 +518,7 @@ ion interface 'wan'\n option dest_addr '198.51.100.20'\n"
         self.assertFalse((self.f.store / "pending").exists())
         self.assertFalse((self.root / "vpn-running").exists())
         self.assertFalse((self.root / "pbr-running").exists())
-        self.assertNotIn("xcloud_vpn", (self.f.config / "network").read_text())
+        self.assertNotIn("svpn_vpn", (self.f.config / "network").read_text())
 
     def test_recovery_failure_remains_retryable(self):
         identifier = self.apply().stdout.decode().strip()
@@ -580,7 +580,7 @@ n/pbr.dnsmasq'\n\tlist addnmount '/etc/hosts'\nconfig host\n\tlist addnmount \
             self.call("rollback", "192.168.8.2").stdout.decode().strip()
         )
         self.call("confirm", identifier)
-        self.assertIn("xcloud_console", (self.f.config / "pbr").read_text())
+        self.assertIn("svpn_console", (self.f.config / "pbr").read_text())
         self.assertTrue((self.root / "vpn-running").exists())
 
     def test_duplicate_events_do_not_reload_services(self):
@@ -597,7 +597,7 @@ n/pbr.dnsmasq'\n\tlist addnmount '/etc/hosts'\nconfig host\n\tlist addnmount \
             set((self.f.store / "transactions").iterdir()), transactions
         )
         self.assertNotIn(
-            "reload", (self.root / "calls").read_text()[len(before):]
+            "reload", (self.root / "calls").read_text()[len(before) :]
         )
 
     def test_domain_apply_and_rollback_use_native_mount_cleanup(self):
@@ -662,11 +662,11 @@ n/pbr.dnsmasq'\n\tlist addnmount '/etc/hosts'\nconfig host\n\tlist addnmount \
         )
         self.assertIn("192.168.9.0/24", (self.f.config / "pbr").read_text())
         self.assertIn(
-            "config zone 'xcloud_zone'",
+            "config zone 'svpn_zone'",
             (self.f.config / "firewall").read_text(),
         )
         self.assertIn(
-            "config forwarding 'xcloud_fwd_lan'",
+            "config forwarding 'svpn_fwd_lan'",
             (self.f.config / "firewall").read_text(),
         )
         self.call("recover")
@@ -687,7 +687,7 @@ t\n',
                 *recovery.SHELL,
                 "-eu",
                 "-c",
-                self.setup + "xcb_service firewall reload",
+                self.setup + "svpn_service firewall reload",
                 "service",
                 str(self.f.library),
             ],
@@ -718,7 +718,7 @@ started"; sleep 30; fi\n'
                     *recovery.SHELL,
                     "-eu",
                     "-c",
-                    self.setup + 'xcb_lifecycle "$@"',
+                    self.setup + 'svpn_lifecycle "$@"',
                     "apply",
                     str(self.f.library),
                     "apply",
@@ -760,7 +760,7 @@ started"; sleep 30; fi\n'
             self.assertFalse((self.f.store / "pending").exists())
             self.assertFalse((self.root / "vpn-running").exists())
             self.assertNotIn(
-                "xcloud_console", (self.f.config / "pbr").read_text()
+                "svpn_console", (self.f.config / "pbr").read_text()
             )
 
     def test_route_gate_rejects_unsafe_routes(
@@ -771,9 +771,9 @@ started"; sleep 30; fi\n'
         self.write(work / "eligible", "192.168.8.0/24\n203.0.113.0/24\n")
         self.write(work / "before", "default via 203.0.113.1 dev eth1\n")
         for route in (
-            "0.0.0.0/1 dev tun_xc0 proto kernel",
-            "192.168.8.0/24 dev tun_xc0 proto kernel",
-            "128.0.0.0/1 via 10.9.0.1 dev tun_xc0",
+            "0.0.0.0/1 dev tun_sv0 proto kernel",
+            "192.168.8.0/24 dev tun_sv0 proto kernel",
+            "128.0.0.0/1 via 10.9.0.1 dev tun_sv0",
         ):
             self.write(
                 work / "after", (work / "before").read_text() + route + "\n"
@@ -782,7 +782,7 @@ started"; sleep 30; fi\n'
                 [
                     "awk",
                     "-v",
-                    "tun=tun_xc0",
+                    "tun=tun_sv0",
                     "-v",
                     "family=4",
                     "-v",

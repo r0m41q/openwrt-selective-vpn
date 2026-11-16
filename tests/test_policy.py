@@ -22,7 +22,7 @@ class PolicyTests(unittest.TestCase):
         self.network = self.root / "network"
         self.network.mkdir(mode=0o700)
         for name, value in {
-            "interface": "xcloud_vpn\n",
+            "interface": "svpn_vpn\n",
             "scope": "lan\n",
             "sources": "192.168.8.0/24\n",
             "lan_networks": "lan\n",
@@ -48,10 +48,10 @@ ftset\n",
             self.f.setup_shell
             + """
             umask 077
-            . "$XCB_LIBRARY_DIR/discover.sh"; . "$XCB_LIBRARY_DIR/network.sh"
-            . "$XCB_LIBRARY_DIR/policy.sh"
+            . "$SVPN_LIBRARY_DIR/discover.sh"; . "$SVPN_LIBRARY_DIR/network.sh"
+            . "$SVPN_LIBRARY_DIR/policy.sh"
             ubus() { cat "$test_root/dnsmasq.service"; }
-            xcb_json_field() { python3 "$test_root/jsonfilter_fixture.py" "$@\
+            svpn_json_field() { python3 "$test_root/jsonfilter_fixture.py" "$@\
 "; }
             dnsmasq() { cat "$test_root/features"; }
             ss() { [ "$*" = '-H -4 -lnptu' ] && cat "$test_root/listeners"; }
@@ -81,8 +81,8 @@ ftset\n",
         self.write(self.f.config / "dhcp", value, 0o644)
         self.write(self.network / "dhcp.source", value)
         self.call(
-            'xcb_uci_export "$1" | awk -v package=dhcp -f "$XCB_LIBRARY_DIR/u\
-ci-inspect.awk" > "$2"',
+            'svpn_uci_export "$1" | awk -v package=dhcp -f '
+            '"$SVPN_LIBRARY_DIR/uci-inspect.awk" > "$2"',
             self.network / "dhcp.source",
             self.network / "dhcp.table",
         )
@@ -98,7 +98,7 @@ ci-inspect.awk" > "$2"',
         self, console="1", browser="0", fallback="0", custom="", **kwargs
     ):
         return self.call(
-            'xcb_policy_prepare "$@"',
+            'svpn_policy_prepare "$@"',
             self.network,
             console,
             browser,
@@ -111,7 +111,7 @@ ci-inspect.awk" > "$2"',
         return Path(self.prepare(**kwargs).stdout.decode().strip())
 
     def discard(self, plan):
-        self.call('xcb_policy_discard "$@"', plan)
+        self.call('svpn_policy_discard "$@"', plan)
 
     def resource(self, plan, name, kind="section"):
         return (plan / "resources" / f"{kind}.pbr.{name}").read_text()
@@ -139,10 +139,10 @@ ci-inspect.awk" > "$2"',
                     p.name for p in (plan / "resources").glob("section.*")
                 }
                 self.assertEqual(
-                    "section.pbr.xcloud_console" in names, console == "1"
+                    "section.pbr.svpn_console" in names, console == "1"
                 )
                 self.assertEqual(
-                    "section.pbr.xcloud_browser" in names, browser == "1"
+                    "section.pbr.svpn_browser" in names, browser == "1"
                 )
                 for path in (plan / "resources").glob("section.*"):
                     text = path.read_text()
@@ -151,20 +151,18 @@ ci-inspect.awk" > "$2"',
                         "dest_port '443'",
                         "chain 'prerouting'",
                         "src_addr '192.168.8.0/24'",
-                        "interface 'xcloud_vpn'",
+                        "interface 'svpn_vpn'",
                     ):
                         self.assertIn(field, text)
                     self.assertNotIn("@br", text)
                 if console == browser == "0":
                     self.assertEqual(list((plan / "resources").iterdir()), [])
                 self.discard(plan)
-        result = self.call('xcb_policy_prepare "$@"', self.network)
+        result = self.call('svpn_policy_prepare "$@"', self.network)
         plan = Path(result.stdout.decode().strip())
-        self.assertTrue(
-            (plan / "resources/section.pbr.xcloud_console").exists()
-        )
+        self.assertTrue((plan / "resources/section.pbr.svpn_console").exists())
         self.assertFalse(
-            (plan / "resources/section.pbr.xcloud_browser").exists()
+            (plan / "resources/section.pbr.svpn_browser").exists()
         )
 
     def test_custom_destinations_are_separate_normalized_and_deduplicated(
@@ -174,22 +172,20 @@ ci-inspect.awk" > "$2"',
             custom="LOGIN.Example.com login.example.com 8.8.4.4 8.8.4.0/24 xs\
 ts.auth.xboxlive.com"
         )
-        text = self.resource(plan, "xcloud_custom")
+        text = self.resource(plan, "svpn_custom")
         self.assertIn("dest_addr 'login.example.com 8.8.4.4 8.8.4.0/24'", text)
         self.assertNotIn("xsts.auth.xboxlive.com", text)
         plan = self.plan(console="0", custom="login.example.com")
-        self.assertTrue(
-            (plan / "resources/section.pbr.xcloud_custom").exists()
-        )
+        self.assertTrue((plan / "resources/section.pbr.svpn_custom").exists())
 
     def test_fallback_replaces_only_console_domains(self):
         plan = self.plan(browser="1", fallback="1")
-        console = self.resource(plan, "xcloud_console")
+        console = self.resource(plan, "svpn_console")
         self.assertIn("20.201.200.49 51.12.31.0", console)
         self.assertNotIn("xsts.auth.xboxlive.com", console)
         self.assertIn(
             "xgpuweb.gssv-play-prod.xboxlive.com",
-            self.resource(plan, "xcloud_browser"),
+            self.resource(plan, "svpn_browser"),
         )
         self.assertIn(
             "static_console_addresses_may_be_outdated",
@@ -218,7 +214,7 @@ ts.auth.xboxlive.com"
         plan = self.plan(fallback="1")
         self.assertIn(
             "src_addr '192.168.8.0/24 10.20.0.0/24'",
-            self.resource(plan, "xcloud_console"),
+            self.resource(plan, "svpn_console"),
         )
         self.write(self.network / "scope", "devices\n")
         for values in ("192.168.8.12\n", "192.168.8.12\n192.168.8.15\n"):
@@ -226,7 +222,7 @@ ts.auth.xboxlive.com"
             plan = self.plan()
             self.assertIn(
                 "src_addr '" + " ".join(values.split()) + "'",
-                self.resource(plan, "xcloud_console"),
+                self.resource(plan, "svpn_console"),
             )
 
     def test_bad_sources_destinations_and_toggles_never_broaden_scope(self):
@@ -349,16 +345,16 @@ on interface 'wan'\n option src_addr '192.168.8.0/24'\nconfig policy\n option\
         self.assertIn("possible_policy_overlap:3", warnings)
         self.assertNotIn("MY_PRIVATE_NAME", warnings)
         identifier = self.f.begin()
-        self.call('xcb_policy_enqueue "$@"', identifier, plan)
+        self.call('svpn_policy_enqueue "$@"', identifier, plan)
         self.f.arm_apply(identifier)
         value = (self.f.config / "pbr").read_text()
         self.assertLess(
             value.index("config policy 'first'"),
-            value.index("config policy 'xcloud_console'"),
+            value.index("config policy 'svpn_console'"),
         )
         self.assertLess(
             value.index("option interface 'ignore'"),
-            value.index("config policy 'xcloud_browser'"),
+            value.index("config policy 'svpn_browser'"),
         )
         self.assertIn("MY_PRIVATE_NAME", value)
         self.f.invoke("rollback", identifier)
@@ -396,18 +392,18 @@ on interface 'wan'\n option src_addr '192.168.8.0/24'\nconfig policy\n option\
             self.resource(plan, "config.supported_interface", "option"),
         )
         self.assertIn(
-            "list supported_interface 'xcloud_vpn'",
+            "list supported_interface 'svpn_vpn'",
             self.resource(plan, "config.supported_interface", "option"),
         )
         identifier = self.f.begin()
-        self.call('xcb_policy_enqueue "$@"', identifier, plan)
+        self.call('svpn_policy_enqueue "$@"', identifier, plan)
         self.f.arm_apply(identifier)
         value = (self.f.config / "pbr").read_text()
         self.assertIn("strict_enforcement '1'", value)
         self.assertIn("ipv6_enabled '1'", value)
         self.assertIn("fw_mask '0000ff00'", value)
         self.f.invoke("rollback", identifier)
-        self.assertNotIn("xcloud_", (self.f.config / "pbr").read_text())
+        self.assertNotIn("svpn_", (self.f.config / "pbr").read_text())
         self.assertIn(
             "resolver_set 'none'", (self.f.config / "pbr").read_text()
         )
@@ -417,13 +413,13 @@ on interface 'wan'\n option src_addr '192.168.8.0/24'\nconfig policy\n option\
 
     def test_reserved_names_and_later_owned_edits_are_refused(self):
         self.pbr(
-            extra="config policy 'xcloud_console'\n option interface 'wan'\n"
+            extra="config policy 'svpn_console'\n option interface 'wan'\n"
         )
         self.reject()
         self.pbr()
         plan = self.plan()
         identifier = self.f.begin()
-        self.call('xcb_policy_enqueue "$@"', identifier, plan)
+        self.call('svpn_policy_enqueue "$@"', identifier, plan)
         self.f.arm_apply(identifier)
         self.f.confirm(identifier)
         self.plan()
@@ -437,20 +433,20 @@ on interface 'wan'\n option src_addr '192.168.8.0/24'\nconfig policy\n option\
     def test_disabling_one_policy_removes_only_owned_section(self):
         plan = self.plan(browser="1")
         identifier = self.f.begin()
-        self.call('xcb_policy_enqueue "$@"', identifier, plan)
+        self.call('svpn_policy_enqueue "$@"', identifier, plan)
         self.f.arm_apply(identifier)
         self.f.confirm(identifier)
         plan = self.plan(console="0", browser="1")
-        self.assertEqual(self.resource(plan, "xcloud_console"), "missing\n")
+        self.assertEqual(self.resource(plan, "svpn_console"), "missing\n")
         self.assertTrue(
-            self.resource(plan, "xcloud_browser").startswith("present\n")
+            self.resource(plan, "svpn_browser").startswith("present\n")
         )
         identifier = self.f.begin()
-        self.call('xcb_policy_enqueue "$@"', identifier, plan)
+        self.call('svpn_policy_enqueue "$@"', identifier, plan)
         self.f.arm_apply(identifier)
         value = (self.f.config / "pbr").read_text()
-        self.assertNotIn("config policy 'xcloud_console'", value)
-        self.assertIn("config policy 'xcloud_browser'", value)
+        self.assertNotIn("config policy 'svpn_console'", value)
+        self.assertIn("config policy 'svpn_browser'", value)
         self.f.invoke("rollback", identifier)
 
     def test_existing_support_and_resolver_do_not_create_duplicate_options(
@@ -459,13 +455,13 @@ on interface 'wan'\n option src_addr '192.168.8.0/24'\nconfig policy\n option\
         self.pbr(
             config="config pbr 'config'\n option enabled '1'\n option resolve\
 r_set 'dnsmasq.nftset'\n list supported_interface 'wan'\n list supported_inte\
-rface 'xcloud_vpn'\n"
+rface 'svpn_vpn'\n"
         )
         plan = self.plan()
         self.assertFalse(list((plan / "resources").glob("option.*")))
 
     def test_incompatible_pbr_mode_and_ignored_interface_fail(self):
-        self.pbr(extra=" list ignored_interface 'xcloud_vpn'\n")
+        self.pbr(extra=" list ignored_interface 'svpn_vpn'\n")
         self.reject()
         self.pbr(extra=" option netifd_enabled '1'\n")
         self.reject()
@@ -478,7 +474,7 @@ rface 'xcloud_vpn'\n"
         self.write(self.root / "listeners", "")
         self.assertNotEqual(
             self.call(
-                'xcb_policy_enqueue "$@"', identifier, plan, check=False
+                'svpn_policy_enqueue "$@"', identifier, plan, check=False
             ).returncode,
             0,
         )
@@ -489,7 +485,7 @@ rface 'xcloud_vpn'\n"
         self.pbr(extra=" option verbosity '1'\n")
         self.assertNotEqual(
             self.call(
-                'xcb_policy_enqueue "$@"', identifier, plan, check=False
+                'svpn_policy_enqueue "$@"', identifier, plan, check=False
             ).returncode,
             0,
         )
@@ -503,7 +499,7 @@ rface 'xcloud_vpn'\n"
             )
         self.assertNotEqual(
             self.call(
-                'xcb_policy_discard "$@"', self.network, check=False
+                'svpn_policy_discard "$@"', self.network, check=False
             ).returncode,
             0,
         )

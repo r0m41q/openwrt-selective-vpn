@@ -1,8 +1,0 @@
-#!/bin/sh
-set -eu
-
-. /usr/lib/xcloud-bypass/load.sh
-case "${1:-}" in
-	status|doctor) xcb_report "$@" ;;
-	*) xcb_lifecycle "$@" ;;
-esac

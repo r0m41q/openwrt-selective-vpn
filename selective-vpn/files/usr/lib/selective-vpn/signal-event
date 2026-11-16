@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+
+. /usr/lib/selective-vpn/common.sh
+. "$SVPN_LIBRARY_DIR/validate.sh"
+. "$SVPN_LIBRARY_DIR/private.sh"
+. "$SVPN_LIBRARY_DIR/state.sh"
+
+[ "$#" -eq 0 ] && [ "$(id -u)" -eq 0 ] || exit 1
+[ -e "$SVPN_PRIVATE_DIR/confirmed" ] || exit 0
+umask 077
+runtime=$(svpn_runtime_directory) || exit 1
+svpn_state_mark "$runtime/event" 1

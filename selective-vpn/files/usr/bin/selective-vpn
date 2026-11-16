@@ -1,0 +1,40 @@
+#!/bin/sh
+set -eu
+
+. /usr/lib/selective-vpn/load.sh
+
+svpn_cli_help() {
+	cat <<'HELP'
+Usage: selective-vpn COMMAND
+
+Commands:
+  setup       Configure VPN and routing over SSH
+  status      Show current state as JSON
+  doctor      Show redacted diagnostics as JSON
+  confirm     Keep a pending change after checking SSH access
+  disable     Stop selective routing
+  rollback    Restore the previous confirmed configuration
+  uninstall   Remove routing configuration and owned resources
+  help        Show this help
+
+Changes to routing need confirmation within 120 seconds or they roll back.
+HELP
+}
+
+[ "$#" -eq 1 ] || { svpn_cli_help >&2; exit 1; }
+case "$1" in
+	setup) svpn_setup_wizard ;;
+	status|doctor) svpn_report "$1" ;;
+	confirm)
+		[ "$(id -u)" -eq 0 ] || exit 1
+		id=$(svpn_tx_pointer pending) || { printf 'No change is pending.\n' >&2; exit 1; }
+		svpn_lifecycle confirm "$id" ;;
+	disable|rollback)
+		[ "$(id -u)" -eq 0 ] || exit 1
+		svpn_setup_peer || { printf 'An SSH client IPv4 address is required.\n' >&2; exit 1; }
+		svpn_lifecycle "$1" "$peer"
+		printf 'Check SSH and the router UI, then run selective-vpn confirm.\n' ;;
+	uninstall) svpn_setup_uninstall ;;
+	help|-h|--help) svpn_cli_help ;;
+	*) svpn_cli_help >&2; exit 1 ;;
+esac

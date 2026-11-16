@@ -1,0 +1,31 @@
+#!/bin/sh
+set -eu
+
+. /usr/lib/selective-vpn/load.sh
+[ "$#" -eq 0 ] && [ "$(id -u)" -eq 0 ] || exit 1
+umask 077
+runtime=$(svpn_runtime_directory) || exit 1
+
+# retry recovery before processing network events
+while ! svpn_lifecycle boot >/dev/null 2>&1; do sleep 3; done
+svpn_state_mark "$runtime/event" 1 || exit 1
+poll=0
+
+while :; do
+	if [ -e "$SVPN_PRIVATE_DIR/pending" ]; then
+		identifier=$(svpn_tx_pointer pending) || exit 1
+		svpn_lifecycle tick "$identifier" >/dev/null 2>&1 || :
+	elif [ -e "$runtime/event" ]; then
+		svpn_private_file "$runtime/event" || exit 1
+		rm -f -- "$runtime/event"
+		# coalesce events from the same network reload
+		sleep 2
+		svpn_lifecycle event >/dev/null 2>&1 || :
+	fi
+	sleep 1
+	poll=$((poll + 1))
+	if [ "$poll" -ge 30 ]; then
+		poll=0
+		svpn_state_mark "$runtime/event" 1 || exit 1
+	fi
+done

@@ -11,9 +11,9 @@ import unittest
 
 SOURCE = (
     Path(__file__).resolve().parents[1]
-    / "xcloud-bypass/files/usr/lib/xcloud-bypass"
+    / "selective-vpn/files/usr/lib/selective-vpn"
 )
-SHELL = shlex.split(os.environ.get("XCB_TEST_SHELL", "/bin/sh"))
+SHELL = shlex.split(os.environ.get("SVPN_TEST_SHELL", "/bin/sh"))
 PIN = ":".join(["AB"] * 32)
 BASE = (
     f"client\ndev tun\nremote vpn.example 1194 udp\npeer-fingerprint {PIN}\n"
@@ -31,7 +31,9 @@ STATIC_KEY = (
 
 class ProfileTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="xcloud-profile-")
+        self.temp = tempfile.TemporaryDirectory(
+            prefix="selective-vpn-profile-"
+        )
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.library = self.root / "lib"
@@ -40,12 +42,12 @@ class ProfileTests(unittest.TestCase):
         common.write_text(
             common.read_text()
             .replace(
-                "readonly XCB_LIBRARY_DIR='/usr/lib/xcloud-bypass'",
-                f"readonly XCB_LIBRARY_DIR='{self.library}'",
+                "readonly SVPN_LIBRARY_DIR='/usr/lib/selective-vpn'",
+                f"readonly SVPN_LIBRARY_DIR='{self.library}'",
             )
             .replace(
-                "readonly XCB_PROFILE_DIR='/etc/openvpn/xcloud-bypass'",
-                f"readonly XCB_PROFILE_DIR='{self.root}/profiles'",
+                "readonly SVPN_PROFILE_DIR='/etc/openvpn/selective-vpn'",
+                f"readonly SVPN_PROFILE_DIR='{self.root}/profiles'",
             )
         )
         self.store = self.root / "profiles"
@@ -84,7 +86,7 @@ ofile.sh"
             setup,
             "profile",
             str(self.library),
-            "xcb_" + function,
+            "svpn_" + function,
             *map(str, arguments),
         ]
 
@@ -100,7 +102,7 @@ ofile.sh"
         if isinstance(profile, str):
             profile = profile.encode()
         result = self.invoke(
-            "profile_prepare", self.store, "tun_xc0", data=profile
+            "profile_prepare", self.store, "tun_sv0", data=profile
         )
         self.assertEqual(result.returncode, 0, result.stderr.decode())
         self.assertEqual(result.stderr, b"")
@@ -113,7 +115,7 @@ ofile.sh"
             profile = profile.encode()
         before = set(self.store.iterdir())
         result = self.invoke(
-            "profile_prepare", self.store, "tun_xc0", data=profile
+            "profile_prepare", self.store, "tun_sv0", data=profile
         )
         self.assertEqual(result.returncode, 1)
         self.assertEqual(result.stdout, b"")
@@ -131,7 +133,7 @@ ofile.sh"
         profile = (bundle / "client.ovpn").read_text()
         self.assertNotIn("auth-user-pass", profile)
         self.assertFalse((bundle / "credentials").exists())
-        self.assertIn("dev tun_xc0\n", profile)
+        self.assertIn("dev tun_sv0\n", profile)
         self.assertIn("tls-version-min 1.2\n", profile)
         self.assertEqual(
             self.summary(bundle)["peer_verification"], "fingerprint"
@@ -488,7 +490,7 @@ y subnet\n"
 
     def test_interrupted_import_removes_staging(self):
         process = subprocess.Popen(
-            self.command("profile_prepare", self.store, "tun_xc0"),
+            self.command("profile_prepare", self.store, "tun_sv0"),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -519,13 +521,13 @@ y subnet\n"
         self.store.rmdir()
         for _ in range(8):
             result = self.invoke(
-                "profile_import", "tun_xc0", data=BASE.encode(), as_root=True
+                "profile_import", "tun_sv0", data=BASE.encode(), as_root=True
             )
             self.assertEqual(result.returncode, 0, result.stderr.decode())
         self.assertEqual(stat.S_IMODE(self.store.stat().st_mode), 0o700)
         before = set(self.store.iterdir())
         result = self.invoke(
-            "profile_import", "tun_xc0", data=BASE.encode(), as_root=True
+            "profile_import", "tun_sv0", data=BASE.encode(), as_root=True
         )
         self.assertEqual(result.returncode, 1)
         self.assertIn(b"unused imported profiles", result.stderr)
@@ -538,7 +540,7 @@ y subnet\n"
             if path == self.root:
                 path.chmod(0o755)
             result = self.invoke(
-                "profile_prepare", path, "tun_xc0", data=BASE.encode()
+                "profile_prepare", path, "tun_sv0", data=BASE.encode()
             )
             self.assertEqual(result.returncode, 1)
         self.root.chmod(0o700)
@@ -565,11 +567,11 @@ y subnet\n"
         self.assertEqual(victim.read_bytes(), b"unchanged")
 
     def test_tunnel_name_selection(self):
-        result = self.invoke("select_tun", data=b"tun_xc0 tun_xc2\n")
-        self.assertEqual((result.returncode, result.stdout), (0, b"tun_xc1\n"))
+        result = self.invoke("select_tun", data=b"tun_sv0 tun_sv2\n")
+        self.assertEqual((result.returncode, result.stdout), (0, b"tun_sv1\n"))
         result = self.invoke(
             "select_tun",
-            data=" ".join(f"tun_xc{i}" for i in range(64)).encode(),
+            data=" ".join(f"tun_sv{i}" for i in range(64)).encode(),
         )
         self.assertEqual(result.returncode, 1)
         self.assertEqual(result.stdout, b"")
@@ -579,7 +581,7 @@ y subnet\n"
 
     @unittest.skipIf(os.getuid() == 0, "requires an unprivileged caller")
     def test_import_requires_root(self):
-        result = self.invoke("profile_import", "tun_xc0", data=BASE.encode())
+        result = self.invoke("profile_import", "tun_sv0", data=BASE.encode())
         self.assertEqual(result.returncode, 1)
         self.assertEqual(result.stdout, b"")
         self.assertIn(b"requires root", result.stderr)

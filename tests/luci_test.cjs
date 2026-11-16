@@ -4,7 +4,7 @@ const path = require('node:path');
 const { test } = require('node:test');
 const vm = require('node:vm');
 
-const resources = path.join(__dirname, '../luci-app-xcloud-bypass/htdocs/luci-static/resources');
+const resources = path.join(__dirname, '../luci-app-selective-vpn/htdocs/luci-static/resources');
 
 function load(file, dependencies) {
 	const source = readFileSync(path.join(resources, file), 'utf8');
@@ -18,7 +18,7 @@ function apiFixture(handler) {
 	const events = {};
 	let now = 0;
 	const calls = [];
-	const api = load('xcloud-bypass/api.js', {
+	const api = load('selective-vpn/api.js', {
 		baseclass: { extend: value => value },
 		L: { env: { sessionid: 'test-session' } },
 		Date: { now: () => now },
@@ -77,7 +77,7 @@ test('the saved selection contains only validated identifiers', () => {
 	assert.equal(f.api.selection().selection, 'profile.abcdefgh');
 	assert.ok(![...f.storage.values()].join('').includes('secret-password'));
 	assert.throws(() => f.api.selection({ mode: 'managed', selection: '../private' }));
-	assert.throws(() => f.api.selection({ mode: 'external', selection: 'xcloud_client' }));
+	assert.throws(() => f.api.selection({ mode: 'external', selection: 'svpn_client' }));
 	assert.throws(() => f.api.selection({ mode: 'external' }));
 	f.api.selection({ mode: 'external', selection: '_personal' });
 	assert.equal(f.api.selection().mode, 'external');
@@ -113,7 +113,7 @@ function viewFixture(handler, writable = true) {
 	const calls = [];
 	const selections = [];
 	const ui = { showModal: (title, children) => { ui.modal = { title, children }; }, hideModal: () => { ui.modal = null; } };
-	const view = load('view/xcloud-bypass/vpn.js', {
+	const view = load('view/selective-vpn/vpn.js', {
 		view: { extend: value => value }, ui,
 		L: { hasViewPermission: () => writable },
 		E: (tag, attributes, children) => new Element(tag, attributes, children),
@@ -127,10 +127,10 @@ function viewFixture(handler, writable = true) {
 
 const baseData = {
 	settings: { enabled: '1', mode: 'managed', selection: 'profile.abcdefgh' },
-	profiles: { profiles: 'profile.abcdefgh' }, clients: { clients: 'personal\nxcloud_client\n<script>' },
+	profiles: { profiles: 'profile.abcdefgh' }, clients: { clients: 'personal\nsvpn_client\n<script>' },
 	status: { configuration: { enabled: true }, vpn: { tunnel: 'ready' } }
 };
-const summary = auth => ({ ok: true, summary: `device=tun_xc0\nauth_required=${auth}\nremote_count=1\npeer_verification=ca`, credentials_saved: true });
+const summary = auth => ({ ok: true, summary: `device=tun_sv0\nauth_required=${auth}\nremote_count=1\npeer_verification=ca`, credentials_saved: true });
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
 test('VPN view shows sanitized summaries and keeps credentials blank', async () => {
@@ -141,7 +141,7 @@ test('VPN view shows sanitized summaries and keeps credentials blank', async () 
 	assert.equal(f.view.password.value, '');
 	assert.equal(f.view.credentials.hidden, false);
 	assert.equal(f.view.clients.children.length, 2);
-	assert.match(f.view.status.textContent, /remain unverified/);
+	assert.match(f.view.status.textContent, /has not been verified/);
 	assert.ok(descendants(root).every(node => node.innerHTML === undefined));
 	f.view.username.value = 'alice';
 	f.view.password.value = 'secret-password';
@@ -223,7 +223,7 @@ test('reconnect asks for management IPv4 and confirms the returned transaction o
 	await settle();
 	f.view.openReconnect();
 	const nodes = f.ui.modal.children.flatMap(descendants);
-	const peer = nodes.find(node => node.id === 'xcloud-peer');
+	const peer = nodes.find(node => node.id === 'selective-vpn-peer');
 	const start = nodes.find(node => node.tag === 'button' && node.children[0] === 'Reconnect');
 	peer.value = 'bad-address';
 	start.events.click();
@@ -249,7 +249,7 @@ test('reconnect failure does not offer confirmation', async () => {
 	await settle();
 	f.view.openReconnect();
 	const nodes = f.ui.modal.children.flatMap(descendants);
-	nodes.find(node => node.id === 'xcloud-peer').value = '192.168.8.2';
+	nodes.find(node => node.id === 'selective-vpn-peer').value = '192.168.8.2';
 	nodes.find(node => node.tag === 'button' && node.children[0] === 'Reconnect').events.click();
 	await settle();
 	assert.equal(f.ui.modal, null);
@@ -257,12 +257,12 @@ test('reconnect failure does not offer confirmation', async () => {
 	assert.ok(!f.calls.some(call => call[0] === 'confirm'));
 });
 
-const routingLogic = () => load('xcloud-bypass/routing.js', { baseclass: { extend: value => value } });
+const routingLogic = () => load('selective-vpn/routing.js', { baseclass: { extend: value => value } });
 const vpnSelection = { mode: 'managed', selection: 'profile.abcdefgh' };
 const routingForm = changes => ({ scope: 'lan', networks: '', devices: '', console: true, browser: false,
 	fallback: false, custom: '', ack: true, peer: '192.168.8.2', ...changes });
 const reviewResult = changes => ({ scope: 'lan', sources: '192.168.8.0/24', lan_networks: 'lan',
-	lan_subnets: '192.168.8.0/24', interface: 'xcloud_vpn', dns: 'dnsmasq.nftset',
+	lan_subnets: '192.168.8.0/24', interface: 'svpn_vpn', dns: 'dnsmasq.nftset',
 	destinations: 'xsts.auth.xboxlive.com', warnings: '', review: 'a'.repeat(64), ...changes });
 
 test('routing options preserve explicit scope, normalize devices and keep modes independent', () => {
@@ -270,8 +270,8 @@ test('routing options preserve explicit scope, normalize devices and keep modes 
 	let args = logic.options(routingForm({ devices: 'hidden old value' }), vpnSelection);
 	assert.equal(args[3], '');
 	assert.deepEqual(Array.from(args.slice(4, 7)), ['1', '0', '0']);
-	args = logic.options(routingForm({ scope: 'devices', devices: 'XBOX\n192.168.8.12 XBOX', browser: true }), vpnSelection);
-	assert.equal(args[3], 'xbox\n192.168.8.12');
+	args = logic.options(routingForm({ scope: 'devices', devices: 'DEVICE\n192.168.8.12 DEVICE', browser: true }), vpnSelection);
+	assert.equal(args[3], 'device\n192.168.8.12');
 	assert.deepEqual(Array.from(args.slice(4, 7)), ['1', '1', '0']);
 	assert.equal(args[10], 'devices');
 	args = logic.options(routingForm({ console: false, browser: true, fallback: true }), vpnSelection);
@@ -300,12 +300,12 @@ test('malformed previews cannot authorize apply', () => {
 		assert.throws(() => logic.preview(reviewResult(changes), args));
 });
 
-function routingFixture(handler = () => {}, writable = true, data = [{}, { leases: '192.168.8.12\txbox' }, { id: '' }]) {
+function routingFixture(handler = () => {}, writable = true, data = [{}, { leases: '192.168.8.12\tdevice' }, { id: '' }]) {
 	const calls = [];
 	const events = {};
 	const timers = new Map();
 	let nextTimer = 0, now = 0;
-	const view = load('view/xcloud-bypass/routing.js', {
+	const view = load('view/selective-vpn/routing.js', {
 		view: { extend: value => value }, routing: routingLogic(),
 		L: { hasViewPermission: () => writable, url: value => '/' + value },
 		Date: { now: () => now },
@@ -432,7 +432,7 @@ test('readonly and unavailable recovery status disable routing mutations', () =>
 });
 
 function reportLogic() {
-	return load('xcloud-bypass/report.js', { baseclass: { extend: value => value }, routing: routingLogic() });
+	return load('selective-vpn/report.js', { baseclass: { extend: value => value }, routing: routingLogic() });
 }
 
 function statusReport(changes = {}) {
@@ -445,7 +445,7 @@ function statusReport(changes = {}) {
 		dns: { integration: 'ready', nftset_capability: 'supported', sets: 1, population: 'empty' },
 		evidence: { tunnel: 'observed', policy_rules: 'observed', policy_matches: 'unverified' },
 		policies: { console: 'present' }, packets: { console: 0 }, bytes: { console: 0 },
-		details: { interface: 'tun_xc0', addresses: '10.8.0.2/24', console_sources: '192.168.8.0/24', console_destinations: 'xsts.auth.xboxlive.com' },
+		details: { interface: 'tun_sv0', addresses: '10.8.0.2/24', console_sources: '192.168.8.0/24', console_destinations: 'xsts.auth.xboxlive.com' },
 		...changes
 	};
 }
@@ -460,7 +460,7 @@ function monitorFixture(handler, options = {}) {
 	const doc = { hidden: false, addEventListener: (name, fn) => { documentEvents[name] = fn; } };
 	const pending = { ok: true, id: '' };
 	const settings = { enabled: '1', mode: 'managed' };
-	const view = load('xcloud-bypass/monitor.js', {
+	const view = load('selective-vpn/monitor.js', {
 		view: { extend: value => value }, report: reportLogic(), routing: routingLogic(),
 		Date: { now: () => now }, document: doc,
 		L: { hasViewPermission: () => options.writable !== false, url: (...parts) => '/' + parts.join('/') },
@@ -505,7 +505,7 @@ test('doctor jobs accept report schemas and recovery calls keep their narrow arg
 
 test('report cleaning drops secrets, raw logs, addresses and false gameplay claims', () => {
 	const raw = statusReport({ report: 'doctor', password: 'private-secret', logs: { raw: 'private-secret', authentication_failure: 2 },
-		evidence: { game_stream: 'observed', xbox_authentication: 'observed', exit_ip: '203.0.113.5' }, packets: { console: 'private-secret', browser: -1, custom: 1e15 } });
+		evidence: { game_stream: 'observed', device_authentication: 'observed', exit_ip: '203.0.113.5' }, packets: { console: 'private-secret', browser: -1, custom: 1e15 } });
 	const value = reportLogic().clean(raw, 'doctor');
 	const encoded = JSON.stringify(value);
 	for (const secret of ['private-secret', '10.8.0.2', '192.168.8.0', 'xsts.auth', '203.0.113.5']) assert.ok(!encoded.includes(secret));
@@ -520,7 +520,7 @@ test('report cleaning drops secrets, raw logs, addresses and false gameplay clai
 test('overview shows configured scope and separate tunnel, rule and traffic evidence', () => {
 	const f = monitorFixture();
 	const text = textContent(f.root);
-	for (const expected of ['tun_xc0', '10.8.0.2/24', '192.168.8.0/24', 'xsts.auth.xboxlive.com', 'Configured authentication domains: 1', 'IPv4 TCP/443', 'remain unverified']) assert.ok(text.includes(expected), expected);
+	for (const expected of ['tun_sv0', '10.8.0.2/24', '192.168.8.0/24', 'xsts.auth.xboxlive.com', 'Configured authentication domains: 1', 'IPv4 TCP/443', 'remain unverified']) assert.ok(text.includes(expected), expected);
 	assert.match(textContent(f.view.statusArea), /Present \/ 0 \/ 0/);
 	assert.equal(f.view.buttons.disable.disabled, false);
 	assert.equal(f.view.buttons.reconnect.disabled, false);
@@ -654,7 +654,7 @@ test('diagnostics run on demand and download only the cleaned doctor report', as
 	const downloaded = decodeURIComponent(f.downloads[0].href.split(',')[1]);
 	for (const secret of ['private-secret', '10.8.0.2', '192.168.8.0', 'xsts.auth']) assert.ok(!downloaded.includes(secret));
 	assert.equal(JSON.parse(downloaded).logs.tls_failure, 2);
-	assert.equal(f.downloads[0].download, 'xcloud-diagnostics.json');
+	assert.equal(f.downloads[0].download, 'selective-vpn-diagnostics.json');
 	f.advance(61000); f.view.download();
 	assert.equal(f.downloads.length, 1);
 });

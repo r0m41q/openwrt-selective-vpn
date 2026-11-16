@@ -7,58 +7,58 @@ import unittest
 
 SOURCE = (
     Path(__file__).resolve().parents[1]
-    / "xcloud-bypass/files/usr/lib/xcloud-bypass"
+    / "selective-vpn/files/usr/lib/selective-vpn"
 )
-SHELL = shlex.split(os.environ.get("XCB_TEST_SHELL", "/bin/sh"))
+SHELL = shlex.split(os.environ.get("SVPN_TEST_SHELL", "/bin/sh"))
 
 
 class SetupTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="xcloud-setup-")
+        self.temp = tempfile.TemporaryDirectory(prefix="selective-vpn-setup-")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.profile = self.root / "client.ovpn"
         self.profile.write_text("client\n")
         self.library = SOURCE
         self.script = f"""
-            XCB_SECTION_PREFIX=xcloud_
-            XCB_MAX_LIST_BYTES=4096
-            XCB_MAX_LIST_ITEMS=64
-            XCB_CONFIRM_SECONDS=120
-            XCB_PROFILE_DIR={shlex.quote(str(self.root / "profiles"))}
-            XCB_LIBRARY_DIR={shlex.quote(str(self.library))}
+            SVPN_SECTION_PREFIX=svpn_
+            SVPN_MAX_LIST_BYTES=4096
+            SVPN_MAX_LIST_ITEMS=64
+            SVPN_CONFIRM_SECONDS=120
+            SVPN_PROFILE_DIR={shlex.quote(str(self.root / "profiles"))}
+            SVPN_LIBRARY_DIR={shlex.quote(str(self.library))}
             test_root={shlex.quote(str(self.root))}
             export test_root
-            . "$XCB_LIBRARY_DIR/validate.sh"
-            . "$XCB_LIBRARY_DIR/policy.sh"
-            . "$XCB_LIBRARY_DIR/setup.sh"
+            . "$SVPN_LIBRARY_DIR/validate.sh"
+            . "$SVPN_LIBRARY_DIR/policy.sh"
+            . "$SVPN_LIBRARY_DIR/setup.sh"
             id() {{ printf '0\\n'; }}
-            xcb_config_file() {{ [ -f "$1" ]; }}
-            xcb_make_private_directory() {{ mkdir -p -m 700 "$1"; }}
-            xcb_private_directory() {{ [ -d "$1" ]; }}
-            xcb_private_file() {{ [ -f "$1" ]; }}
-            xcb_select_tun() {{ cat >/dev/null; printf 'tun_xc0\\n'; }}
-            xcb_profile_import() {{
-                mkdir -p "$XCB_PROFILE_DIR/profile.test"
+            svpn_config_file() {{ [ -f "$1" ]; }}
+            svpn_make_private_directory() {{ mkdir -p -m 700 "$1"; }}
+            svpn_private_directory() {{ [ -d "$1" ]; }}
+            svpn_private_file() {{ [ -f "$1" ]; }}
+            svpn_select_tun() {{ cat >/dev/null; printf 'tun_sv0\\n'; }}
+            svpn_profile_import() {{
+                mkdir -p "$SVPN_PROFILE_DIR/profile.test"
                 printf 'auth_required=1\\n' > \
-                    "$XCB_PROFILE_DIR/profile.test/summary"
+                    "$SVPN_PROFILE_DIR/profile.test/summary"
                 cat >/dev/null
-                printf '%s\\n' "$XCB_PROFILE_DIR/profile.test"
+                printf '%s\\n' "$SVPN_PROFILE_DIR/profile.test"
             }}
-            xcb_profile_credentials() {{ cat > "$test_root/credentials"; }}
-            xcb_setup_router_url() {{ printf 'http://192.168.8.1/\\n'; }}
-            xcb_setup_clients() {{ printf 'vpnuser\\n'; }}
-            xcb_setup_preview() {{
+            svpn_profile_credentials() {{ cat > "$test_root/credentials"; }}
+            svpn_setup_router_url() {{ printf 'http://192.168.8.1/\\n'; }}
+            svpn_setup_clients() {{ printf 'vpnuser\\n'; }}
+            svpn_setup_preview() {{
                 printf '%s\\n' "$@" > "$test_root/preview"
             }}
-            xcb_lifecycle() {{
+            svpn_lifecycle() {{
                 printf '%s\\n' "$@" > "$test_root/lifecycle"
                 if [ "$1" = apply ]; then
                     printf '%s\\n' "$@" > "$test_root/apply.args"
                 fi
             }}
-            xcb_tx_pointer() {{ printf 'pending-id\\n'; }}
-            xcb_setup_wizard
+            svpn_tx_pointer() {{ printf 'pending-id\\n'; }}
+            svpn_setup_wizard
         """
 
     def run_wizard(self, data, ssh="192.168.8.20 123 192.168.8.1 22"):
@@ -137,9 +137,9 @@ class SetupTests(unittest.TestCase):
 
     def test_failed_apply_never_asks_for_confirmation(self):
         self.script = self.script.replace(
-            "            xcb_setup_wizard\n",
-            "            xcb_lifecycle() { return 1; }\n"
-            "            xcb_setup_wizard\n",
+            "            svpn_setup_wizard\n",
+            "            svpn_lifecycle() { return 1; }\n"
+            "            svpn_setup_wizard\n",
         )
         data = "2\nvpnuser\n\n\n\nn\nn\n\ny\ny\n"
         result = self.run_wizard(data)

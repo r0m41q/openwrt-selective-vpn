@@ -1,0 +1,28 @@
+#!/bin/sh
+set -eu
+
+. /usr/lib/selective-vpn/common.sh
+. "$SVPN_LIBRARY_DIR/validate.sh"
+. "$SVPN_LIBRARY_DIR/private.sh"
+. "$SVPN_LIBRARY_DIR/state.sh"
+. "$SVPN_LIBRARY_DIR/transaction.sh"
+for library in profile discover network policy runtime lifecycle; do
+	. "$SVPN_LIBRARY_DIR/$library.sh"
+done
+
+[ "$#" -eq 1 ] && svpn_state_id "$1" || exit 1
+umask 077
+runtime=$(svpn_runtime_directory) || exit 1
+svpn_state_mark "$runtime/watch.$1" "$$" || exit 1
+
+while :; do
+	result=0
+	if [ -d "$SVPN_PRIVATE_DIR/transactions/$1/lifecycle" ]; then
+		svpn_lifecycle tick "$1" || result=$?
+	else svpn_transaction tick "$1" || result=$?; fi
+	case "$result" in
+		0|2) exit 0 ;;
+		3|4) sleep 1 ;;
+		*) exit 1 ;;
+	esac
+done

@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the current development package design. Router integration and live routing have not been tested by this project yet. Package and resource names below still use the previous identity while the rename is in progress.
+This document describes the current development package design. Router integration and live routing have not been tested by this project yet.
 
 ## Platform
 
@@ -12,27 +12,27 @@ The [25.12.6 feed manifest](https://downloads.openwrt.org/releases/25.12.6/targe
 
 ## Components and ownership
 
-The current build has a core `xcloud-bypass` package and a `luci-app-xcloud-bypass` frontend. The CLI and RPC backend use the same validation, configuration, and recovery code. Shell and BusyBox utilities handle orchestration; ucode handles authenticated RPC. No separate web server or continuous polling daemon is needed.
+The current build has a core `selective-vpn` package and a `luci-app-selective-vpn` frontend. The CLI and RPC backend use the same validation, configuration, and recovery code. Shell and BusyBox utilities handle orchestration; ucode handles authenticated RPC. No separate web server or continuous polling daemon is needed.
 
 | Location | Purpose |
 | --- | --- |
-| `/etc/config/xcloud-bypass` | Non-secret settings; initially disabled |
-| `/usr/bin/xcloud-bypass` | CLI |
-| `/usr/lib/xcloud-bypass/control` | Fixed backend operations |
-| `/usr/lib/xcloud-bypass/` | Shared backend libraries |
-| `/etc/openvpn/xcloud-bypass/` | Imported profile and credentials; directory mode 700, files 600 |
-| `/etc/xcloud-bypass/` | Ownership journal and bounded recovery snapshots; private to root |
-| `/var/run/xcloud-bypass/` | Private staging, jobs, locks, and confirmation state |
-| `/usr/share/rpcd/ucode/xcloud-bypass` | Application RPC object |
+| `/etc/config/selective-vpn` | Non-secret settings; initially disabled |
+| `/usr/bin/selective-vpn` | CLI |
+| `/usr/lib/selective-vpn/control` | Fixed backend operations |
+| `/usr/lib/selective-vpn/` | Shared backend libraries |
+| `/etc/openvpn/selective-vpn/` | Imported profile and credentials; directory mode 700, files 600 |
+| `/etc/selective-vpn/` | Ownership journal and bounded recovery snapshots; private to root |
+| `/var/run/selective-vpn/` | Private staging, jobs, locks, and confirmation state |
+| `/usr/share/rpcd/ucode/selective-vpn` | Application RPC object |
 | `/usr/share/rpcd/acl.d/` and `/usr/share/luci/menu.d/` | Permissions and Services menu entry |
 
-Use stable UCI names beginning with `xcloud_` for owned policies, firewall sections, and the managed OpenVPN client. Allocate and remember unused network and TUN names; never adopt an existing section because its name matches. Record original and applied values for every shared option or list entry. Existing VPN clients remain user-owned.
+Use stable UCI names beginning with `svpn_` for owned policies, firewall sections, and the managed OpenVPN client. Allocate and remember unused network and TUN names; never adopt an existing section because its name matches. Record original and applied values for every shared option or list entry. Existing VPN clients remain user-owned.
 
 Core dependencies include `pbr`, `openvpn-openssl`, and their resolved networking dependencies. Verify `ip-full`, nftables JSON support, firewall4, TUN support, UCI, and JSON utilities. The frontend adds `luci-base` and the required rpcd/ucode modules, following the [25.12 LuCI runtime dependencies](https://github.com/openwrt/luci/blob/75a306df84a020c57a631ef5b4c02ace56d93387/modules/luci-base/Makefile). `luci-app-pbr` and `luci-app-openvpn` are optional conveniences. Resolver changes require a separate installer check and confirmation.
 
 ## Traffic selection
 
-The current build has fixed TCP/443 policies for its built-in service destinations and a separate custom-destination policy. The new configuration will put custom domains, IPv4 addresses and CIDRs first, with validated protocol and port choices. The existing domain sets and static-IP fallback will move into an optional preset. Until that work is complete, preview the exact destination list before applying and do not describe the current build as protocol-independent.
+The current build has fixed TCP/443 policies for its built-in service destinations and a separate custom-destination policy. Preview the exact destination list before applying. Routing is IPv4-only, and protocol and port settings are not yet configurable.
 
 Discover eligible local networks from firewall membership and live netifd addresses. Default to the ordinary trusted LAN when it is unambiguous; ask for network selection during setup otherwise. Do not automatically include guest networks, VPN servers, or other zones. In all-LAN mode, generate source IPv4 CIDRs from those networks. In device mode, resolve DHCP names to current IPv4 addresses and require every selected address to belong to an eligible network. Empty optional device input means all eligible LAN clients. Reject ambiguous names and overlapping address space across eligible and excluded networks.
 
@@ -83,7 +83,7 @@ Restore only values that still equal this application's applied values. Report c
 
 ## LuCI and security
 
-Use JavaScript views with `rpc.declare()` and a dedicated `xcloud-bypass` ubus object. Follow the [LuCI example layout](https://github.com/openwrt/luci/tree/openwrt-25.12/applications/luci-app-example), [ucode RPC structure](https://github.com/openwrt/luci/blob/openwrt-25.12/modules/luci-base/root/usr/share/rpcd/ucode/luci), and [method ACL format](https://github.com/openwrt/luci/blob/openwrt-25.12/applications/luci-app-example/root/usr/share/rpcd/acl.d/luci-app-example.json).
+Use JavaScript views with `rpc.declare()` and a dedicated `selective-vpn` ubus object. Follow the [LuCI example layout](https://github.com/openwrt/luci/tree/openwrt-25.12/applications/luci-app-example), [ucode RPC structure](https://github.com/openwrt/luci/blob/openwrt-25.12/modules/luci-base/root/usr/share/rpcd/ucode/luci), and [method ACL format](https://github.com/openwrt/luci/blob/openwrt-25.12/applications/luci-app-example/root/usr/share/rpcd/acl.d/luci-app-example.json).
 
 Allow read methods for sanitized settings, status, devices, job state, and diagnostics. Allow write methods for validated settings, profile import, write-only credentials, apply/confirm, and specific lifecycle actions. Transfer a selected profile as bounded text through the import method, initially limited to 32 KiB with an additional encoded-request limit. Reject larger files clearly. This avoids granting generic filesystem upload permissions to `/etc/openvpn`. Jobs return promptly and expose bounded progress through their identifiers.
 

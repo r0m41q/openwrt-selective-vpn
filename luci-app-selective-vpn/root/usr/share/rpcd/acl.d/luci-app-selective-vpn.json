@@ -1,0 +1,15 @@
+{
+	"luci-app-selective-vpn": {
+		"description": "Access Selective VPN",
+		"read": {
+			"ubus": {
+				"selective-vpn": [ "job", "status", "doctor", "settings", "clients", "profiles", "leases", "profile_summary", "pending" ]
+			}
+		},
+		"write": {
+			"ubus": {
+				"selective-vpn": [ "import_profile", "set_credentials", "preview", "apply", "confirm", "reconnect", "enable", "disable", "rollback", "uninstall" ]
+			}
+		}
+	}
+}

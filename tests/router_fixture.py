@@ -69,7 +69,7 @@ def service(name, action, *rest):
                     for value in match[1].split():
                         if re.search(r"[a-z]", value):
                             snippet += f"nftset=\
-/{value}/4#inet#fw4#pbr_xcloud_vpn_4_dst_ip_console\n"
+/{value}/4#inet#fw4#pbr_svpn_vpn_4_dst_ip_console\n"
                 (root / "pbr.dnsmasq").write_text(
                     snippet if not flag("no-snippet") else ""
                 )
@@ -84,9 +84,9 @@ def service(name, action, *rest):
                 )
                 (root / "pbr.dnsmasq").unlink(missing_ok=True)
     if name == "openvpn":
-        if rest != ("xcloud_client",):
+        if rest != ("svpn_client",):
             raise ValueError("unscoped VPN mutation")
-        path = root / "sysnet/tun_xc0"
+        path = root / "sysnet/tun_sv0"
         if action == "start" and not flag("no-vpn"):
             path.mkdir(parents=True, exist_ok=True)
             (path / "tun_flags").write_text("0x1001\n")
@@ -112,7 +112,7 @@ elif command == "ubus":
         print(text("live.json"))
     elif obj == "service":
         name = json.loads(payload[0])["name"]
-        if name == "xcloud-bypass":
+        if name == "selective-vpn":
             emit(
                 {
                     name: {
@@ -123,7 +123,7 @@ elif command == "ubus":
                 }
             )
         elif name == "openvpn":
-            client = selected("client", "xcloud_client")
+            client = selected("client", "svpn_client")
             emit(
                 {
                     name: {
@@ -168,11 +168,11 @@ elif command == "ubus":
     elif obj == "network" and method == "reload":
         with (root / "calls").open("a") as stream:
             stream.write("network reload\n")
-    elif obj == "network.interface.xcloud_vpn" and method == "add_device":
-        if json.loads(payload[0]) != {"name": "tun_xc0", "link-ext": True}:
+    elif obj == "network.interface.svpn_vpn" and method == "add_device":
+        if json.loads(payload[0]) != {"name": "tun_sv0", "link-ext": True}:
             raise ValueError("unsafe attachment")
-    elif obj == "network.interface.xcloud_vpn" and method == "status":
-        emit({"up": True, "l3_device": "tun_xc0"})
+    elif obj == "network.interface.svpn_vpn" and method == "status":
+        emit({"up": True, "l3_device": "tun_sv0"})
     elif obj == "network.interface.vpnuser" and method == "status":
         emit({"up": True, "l3_device": "tun_user"})
     else:
@@ -187,27 +187,27 @@ elif command == "ip":
         print(text("routes" + args[0][1:]), end="")
         if args[0] == "-4" and flag("vpn-running"):
             print(
-                "10.9.0.0/24 dev tun_xc0 proto kernel scope link src 10.9.0.2"
+                "10.9.0.0/24 dev tun_sv0 proto kernel scope link src 10.9.0.2"
             )
     elif args[:3] == ["-4", "route", "show"]:
         if not flag("no-pbr-route"):
-            print("default via 10.9.0.1 dev " + selected("device", "tun_xc0"))
+            print("default via 10.9.0.1 dev " + selected("device", "tun_sv0"))
     elif args[:3] == ["-4", "rule", "show"]:
         print(
             "30000: from all fwmark 0x10000/0xff0000 lookup pbr_"
-            + selected("interface", "xcloud_vpn")
+            + selected("interface", "svpn_vpn")
         )
     elif args[:3] == ["-o", "link", "show"]:
         print(
             "5: "
-            + selected("device", "tun_xc0")
+            + selected("device", "tun_sv0")
             + ": <POINTOPOINT,UP,LOWER_UP>"
         )
     elif args[:4] == ["-4", "-o", "address", "show"]:
         if (flag("vpn-running") or flag("external-running")) and not flag(
             "no-address"
         ):
-            tun = selected("device", "tun_xc0")
+            tun = selected("device", "tun_sv0")
             print(f"5: {tun} inet 10.9.0.2/24 scope global {tun}")
     else:
         raise ValueError("unknown fixture ip call")
@@ -234,11 +234,7 @@ elif command == "nft":
         emit({"nftables": []})
     elif "sets" in args:
         emit(
-            {
-                "nftables": [
-                    {"set": {"name": "pbr_xcloud_vpn_4_dst_ip_console"}}
-                ]
-            }
+            {"nftables": [{"set": {"name": "pbr_svpn_vpn_4_dst_ip_console"}}]}
         )
     else:
         emit(
@@ -246,14 +242,14 @@ elif command == "nft":
                 "nftables": [
                     {"rule": {"comment": label}}
                     for label in (
-                        "Xbox console authentication",
-                        "Browser xCloud authentication",
+                        "Console authentication",
+                        "Browser service authentication",
                         "Custom authentication destinations",
                     )
                     if {
-                        "Xbox console authentication": "xcloud_console",
-                        "Browser xCloud authentication": "xcloud_browser",
-                        "Custom authentication destinations": "xcloud_custom",
+                        "Console authentication": "svpn_console",
+                        "Browser service authentication": "svpn_browser",
+                        "Custom authentication destinations": "svpn_custom",
                     }[label]
                     in text("config/pbr")
                 ]

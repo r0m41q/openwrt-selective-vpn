@@ -7,9 +7,9 @@ import unittest
 
 LIBRARY = (
     Path(__file__).resolve().parents[1]
-    / "xcloud-bypass/files/usr/lib/xcloud-bypass"
+    / "selective-vpn/files/usr/lib/selective-vpn"
 )
-SHELL = shlex.split(os.environ.get("XCB_TEST_SHELL", "/bin/sh"))
+SHELL = shlex.split(os.environ.get("SVPN_TEST_SHELL", "/bin/sh"))
 
 
 class ValidationTests(unittest.TestCase):
@@ -22,7 +22,7 @@ class ValidationTests(unittest.TestCase):
                 '. "$1/common.sh"; . "$1/validate.sh"; shift; "$@"',
                 "validator",
                 str(LIBRARY),
-                "xcb_" + name,
+                "svpn_" + name,
                 *values,
             ],
             capture_output=True,
@@ -139,7 +139,7 @@ class ValidationTests(unittest.TestCase):
             ],
             [
                 "",
-                "xbox",
+                "device",
                 ".example.com",
                 "example.com.",
                 "a..example",
@@ -161,51 +161,51 @@ class ValidationTests(unittest.TestCase):
     def test_hostnames(self):
         self.cases(
             "valid_hostname",
-            ["Xbox", "xbox-series-x", "xbox.lan", "123x"],
+            ["Device", "device-series-x", "device.lan", "123x"],
             [
                 "",
                 "123",
                 "192.168.1.1",
                 "bad_name",
-                "xbox/../../etc",
-                "xbox.local.",
-                "xbox\r",
+                "device/../../etc",
+                "device.local.",
+                "device\r",
             ],
         )
 
     def test_identifiers(self):
         self.cases(
             "valid_identifier",
-            ["lan", "_internal", "xcloud_console", "a" * 63],
+            ["lan", "_internal", "svpn_console", "a" * 63],
             ["", "1lan", "lan-1", "lan.wan", "../lan", "a" * 64, "é"],
         )
         self.cases(
             "reserved_identifier",
-            ["xcloud_console", "xcloud_1"],
+            ["svpn_console", "svpn_1"],
             [
-                "xcloud_",
-                "xcloud",
+                "svpn_",
+                "selectivevpn",
                 "console",
-                "Xcloud_console",
-                "xcloud_../../etc",
+                "Svpn_console",
+                "svpn_../../etc",
             ],
         )
         self.cases(
             "valid_interface",
-            ["tun0", "xcloud_vpn", "a" * 15],
+            ["tun0", "svpn_vpn", "a" * 15],
             ["", "a" * 16, "tun/0", "@tun0"],
         )
 
     def test_devices_and_destinations(self):
         self.cases(
             "valid_device",
-            ["Xbox", "192.168.1.42", "xbox.lan"],
+            ["Device", "192.168.1.42", "device.lan"],
             ["", "192.168.1.42/24", "256.168.1.1", "*", "::1", "01.2.3.4"],
         )
         self.cases(
             "valid_destination",
             ["20.201.200.49", "51.12.31.0/32", "example.com"],
-            ["", "xbox", "https://example.com", "1.2.3.4/99", "@wan"],
+            ["", "device", "https://example.com", "1.2.3.4/99", "@wan"],
         )
 
     def test_byte_limits(self):
@@ -228,7 +228,11 @@ class ValidationTests(unittest.TestCase):
                 "EXAMPLE.COM example.com\nother.example\tEXAMPLE.COM",
                 b"example.com\nother.example\n",
             ),
-            ("device", "192.168.1.42\nXbox\txbox", b"192.168.1.42\nxbox\n"),
+            (
+                "device",
+                "192.168.1.42\nDevice\tdevice",
+                b"192.168.1.42\ndevice\n",
+            ),
             ("ipv4", "1.2.3.4 1.2.3.4 5.6.7.8", b"1.2.3.4\n5.6.7.8\n"),
             (
                 "subnet",
@@ -236,7 +240,7 @@ class ValidationTests(unittest.TestCase):
                 b"10.0.0.0/8\n192.168.1.0/24\n",
             ),
             ("identifier", "LAN lan LAN", b"LAN\nlan\n"),
-            ("hostname", "Xbox xbox.local", b"xbox\nxbox.local\n"),
+            ("hostname", "Device device.local", b"device\ndevice.local\n"),
             (
                 "destination",
                 "EXAMPLE.COM 1.2.3.4/32",
@@ -255,9 +259,9 @@ class ValidationTests(unittest.TestCase):
         self.check("normalize_list", ("domain", " " * 4096))
         for kind, value in (
             ("domain", "good.example bad_name"),
-            ("device", "xbox 256.0.0.1"),
+            ("device", "device 256.0.0.1"),
             ("subnet", "10.0.0.1/8"),
-            ("device", " ".join(["xbox"] * 65)),
+            ("device", " ".join(["device"] * 65)),
             ("domain", " " * 4097),
             ("unknown", ""),
             ("ipv4", "1.2.3.4\r"),
@@ -267,12 +271,17 @@ class ValidationTests(unittest.TestCase):
     def test_empty_devices_are_distinct_from_invalid_devices(self):
         for value in ("", " ", "\t\n"):
             self.check("normalize_devices", (value,), expected=3)
-        for value in ("999.0.0.1", "xbox invalid/name", "*", "xbox;reboot"):
+        for value in (
+            "999.0.0.1",
+            "device invalid/name",
+            "*",
+            "device;reboot",
+        ):
             self.check("normalize_devices", (value,), expected=1)
         self.check(
             "normalize_devices",
-            ("Xbox 192.168.1.42 xbox",),
-            output=b"xbox\n192.168.1.42\n",
+            ("Device 192.168.1.42 device",),
+            output=b"device\n192.168.1.42\n",
         )
 
     def test_untrusted_strings_are_not_executed_or_echoed(self):
@@ -300,7 +309,7 @@ class ValidationTests(unittest.TestCase):
                     self.check(validator, (attack,), expected=1)
             self.check("normalize_list", ("domain", attack), expected=1)
         self.check(
-            "normalize_list", ("$(printf INJECTED)", "xbox"), expected=1
+            "normalize_list", ("$(printf INJECTED)", "device"), expected=1
         )
 
     def test_argument_counts(self):
@@ -320,7 +329,7 @@ class ValidationTests(unittest.TestCase):
         )
         for name in single:
             self.check(name, (), expected=1)
-            self.check(name, ("xbox", "extra"), expected=1)
+            self.check(name, ("device", "extra"), expected=1)
         for name in (
             "valid_uint",
             "valid_size",
