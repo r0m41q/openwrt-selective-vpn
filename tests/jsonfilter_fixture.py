@@ -39,6 +39,7 @@ def query(path, expression):
             print(value)
         else:
             print(json.dumps(value))
+    return bool(values)
 
 
 if __name__ == "__main__":

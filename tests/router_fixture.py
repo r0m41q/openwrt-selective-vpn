@@ -103,7 +103,9 @@ if command == "service":
 elif command == "fw4":
     sys.exit(1 if flag("bad-firewall") else 0)
 elif command == "jsonfilter":
-    query(args[1], args[3])
+    matched = query(args[1], args[3])
+    if flag("strict-jsonfilter") and not matched:
+        sys.exit(1)
 elif command == "ubus":
     _, _, _, obj, method, *payload = args
     if obj == "network.interface":
@@ -210,7 +212,25 @@ elif command == "ip":
     else:
         raise ValueError("unknown fixture ip call")
 elif command == "nft":
-    if flag("no-policies"):
+    if "chain" in args and flag("diagnostic-nft"):
+        print(text("diagnostic-nft"))
+    elif "set" in args:
+        emit(
+            {
+                "nftables": [
+                    {
+                        "set": {
+                            "name": args[-1],
+                            "type": "ipv4_addr",
+                            "elem": ["20.201.200.49"]
+                            if flag("populated-set")
+                            else [],
+                        }
+                    }
+                ]
+            }
+        )
+    elif flag("no-policies"):
         emit({"nftables": []})
     elif "sets" in args:
         emit(
@@ -240,7 +260,8 @@ elif command == "nft":
             }
         )
 elif command == "dnsmasq":
-    print("Dnsmasq version 2.93\nCompile time options: IPv6 DHCP nftset")
+    features = "IPv6 DHCP" if flag("no-nftset") else "IPv6 DHCP nftset"
+    print("Dnsmasq version 2.93\nCompile time options: " + features)
 elif command == "ss":
     print(
         'udp UNCONN 0 0 0.0.0.0:53 0.0.0.0:* users:(("dnsmasq",pid=123,fd=5))'
