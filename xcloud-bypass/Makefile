@@ -26,6 +26,18 @@ define Package/xcloud-bypass/conffiles
 /etc/config/xcloud-bypass
 endef
 
+define Package/xcloud-bypass/prerm
+#!/bin/sh
+[ -n "$${IPKG_INSTROOT}" ] && exit 0
+if [ -e /etc/xcloud-bypass/pending ] || \
+   { [ "$${PKG_UPGRADE}" != 1 ] && uci -q show xcloud-bypass.xcloud_active >/dev/null 2>&1; }; then
+	[ "$${PKG_UPGRADE}" = 1 ] || /etc/init.d/xcloud-bypass enable
+	/etc/init.d/xcloud-bypass start
+	echo 'Finish or roll back pending changes, then run xcloud-bypass uninstall before removing the package.' >&2
+	exit 1
+fi
+endef
+
 define Build/Configure
 endef
 
@@ -48,6 +60,8 @@ define Package/xcloud-bypass/install
 	$(INSTALL_BIN) ./files/etc/init.d/xcloud-bypass $(1)/etc/init.d/xcloud-bypass
 	$(INSTALL_DATA) ./files/etc/hotplug.d/iface/95-xcloud-bypass $(1)/etc/hotplug.d/iface/
 	$(INSTALL_DATA) ./files/etc/hotplug.d/openvpn/95-xcloud-bypass $(1)/etc/hotplug.d/openvpn/
+	$(INSTALL_DIR) $(1)/usr/share/licenses/xcloud-bypass
+	$(INSTALL_DATA) ./LICENSE $(1)/usr/share/licenses/xcloud-bypass/LICENSE
 endef
 
 $(eval $(call BuildPackage,xcloud-bypass))
