@@ -1,8 +1,7 @@
 config settings 'main'
 	option enabled '0'
-	option console '1'
-	option browser '0'
-	option scope 'lan'
 	option vpn_mode 'managed'
-	option static_fallback '0'
 	option ipv6_acknowledged '0'
+
+config rule 'global'
+	option proto 'tcp udp'

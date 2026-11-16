@@ -1,5 +1,11 @@
 #!/bin/sh
 
+svpn_routing_preview_rules() (
+	[ "$#" -eq 3 ] || exit 1
+	svpn_rules=1
+	svpn_routing_preview "$1" "$2" "$3" '' 0 0 0 ''
+)
+
 svpn_routing_digest() (
 	[ "$#" -eq 2 ] && svpn_private_directory "$1" && svpn_private_directory "$2" || exit 1
 	{
@@ -80,7 +86,7 @@ svpn_routing_preview() (
 	json_add_string review "$value"
 	value=$(while IFS= read -r warning; do
 		case "$warning" in
-			client_dns_must_use_router|encrypted_dns_and_cached_answers_may_bypass_sets|static_console_addresses_may_be_outdated|ipv4_only_authentication_policies|shared_pbr_will_be_enabled|shared_pbr_resolver_will_change) printf '%s\n' "$warning" ;;
+			client_dns_must_use_router|encrypted_dns_and_cached_answers_may_bypass_sets|static_console_addresses_may_be_outdated|ipv4_only_routing_policies|shared_pbr_will_be_enabled|shared_pbr_resolver_will_change) printf '%s\n' "$warning" ;;
 			possible_policy_overlap:*) printf '%s\n' possible_policy_overlap ;;
 		esac
 	done < "$policy/warnings" | sort -u) || exit 1

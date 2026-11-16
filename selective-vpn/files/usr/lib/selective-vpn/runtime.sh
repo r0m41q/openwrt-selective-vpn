@@ -135,6 +135,19 @@ svpn_pbr_policies() (
 	nft -j list chain inet fw4 pbr_prerouting > "$work/pbr.nft" 2>/dev/null || exit 1
 	[ "$(wc -c < "$work/pbr.nft")" -le "$SVPN_MAX_SNAPSHOT_BYTES" ] || exit 1
 	svpn_json_field "$work/pbr.nft" '@.nftables[*].rule.comment' > "$work/pbr.comments" || exit 1
+	svpn_config_file "$SVPN_CONFIG_DIR/pbr" && svpn_uci_clean pbr || exit 1
+	svpn_uci_export "$SVPN_CONFIG_DIR/pbr" > "$work/policies.export" || exit 1
+	awk -v package=pbr -f "$SVPN_LIBRARY_DIR/uci-inspect.awk" "$work/policies.export" > "$work/policies.table" || exit 1
+	awk -F '\t' '$1=="S" { own[$2]=($3=="policy" && $4 ~ /^svpn_route_[a-zA-Z0-9_]+$/) }
+		$1=="V" && own[$2] { v[$2,$3]=$4 }
+		END { for(s in own) if(own[s] && v[s,"enabled"]!="0" && v[s,"chain"] ~ /^(|prerouting)$/ && v[s,"name"]!="") print v[s,"name"] }' \
+		"$work/policies.table" > "$work/route.labels" || exit 1
+	while IFS= read -r label; do
+		grep -qxF "$label" "$work/pbr.comments" || exit 1
+	done < "$work/route.labels"
+	while IFS= read -r label; do
+		case "$label" in 'Selective VPN: '*) grep -qxF "$label" "$work/route.labels" || exit 1 ;; esac
+	done < "$work/pbr.comments"
 	for name in console browser custom; do
 		svpn_resource_read section "pbr.svpn_$name" "$work/policy.current" "$work" || exit 1
 		case "$name" in console) label='Console authentication' ;; browser) label='Browser service authentication' ;; custom) label='Custom authentication destinations' ;; esac

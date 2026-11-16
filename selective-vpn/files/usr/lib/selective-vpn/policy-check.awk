@@ -36,6 +36,7 @@ function https_port(text,    a,n,i,b) {
 	}
 	return 0
 }
+FILENAME ~ /pbr\.owned$/ { owned[$1]=1; next }
 FILENAME ~ /pbr\.table$/ {
 	if ($1 == "S") { type[$2] = $3; name[$2] = $4; sections++ }
 	if ($1 == "V") {
@@ -45,7 +46,7 @@ FILENAME ~ /pbr\.table$/ {
 	}
 	next
 }
-FILENAME ~ /\/sources$/ { sources[$1] = 1; next }
+FILENAME ~ /\/(sources|devices)$/ { sources[$1] = 1; next }
 FILENAME ~ /\/lan_subnets$/ { eligible[$1] = 1; next }
 FILENAME ~ /\/live$/ { if ($1 == "A") routers[$3] = 1; next }
 FILENAME ~ /\/destinations$/ { destinations[$1] = 1; next }
@@ -69,13 +70,13 @@ END {
 	}
 	for (s = 1; s <= sections; s++) {
 		if (v[s,"enabled"] == "0") continue
-		if (name[s] ~ /^svpn_(console|browser|custom)$/) continue
+		if (name[s] in owned) continue
 		if (type[s] == "dns_policy" && domains && may_overlap(v[s,"src_addr"],sources)) {
 			print "An existing PBR DNS policy may bypass the integrated resolver." > "/dev/stderr"
 			exit 1
 		}
 		if (type[s] != "policy" || (v[s,"chain"] != "" && v[s,"chain"] != "prerouting")) continue
-		if (v[s,"proto"] ~ /^(udp|17|icmp|1|ipv6-icmp|58)$/) continue
-		if (https_port(v[s,"dest_port"]) && may_overlap(v[s,"src_addr"],sources) && may_overlap(v[s,"dest_addr"],destinations)) print "possible_policy_overlap:" s
+		if (!generic && v[s,"proto"] ~ /^(udp|17|icmp|1|ipv6-icmp|58)$/) continue
+		if ((generic || https_port(v[s,"dest_port"])) && may_overlap(v[s,"src_addr"],sources) && may_overlap(v[s,"dest_addr"],destinations)) print "possible_policy_overlap:" s
 	}
 }

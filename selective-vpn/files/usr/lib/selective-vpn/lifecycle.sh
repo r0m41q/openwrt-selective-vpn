@@ -3,7 +3,7 @@
 svpn_lifecycle() (
 	[ "$#" -ge 1 ] && [ "$(id -u)" -eq 0 ] || exit 1
 	operation=$1; shift
-	case "$operation" in apply|enable|reconnect|disable|rollback|uninstall|confirm|recover|boot|event|tick) ;; *) exit 1 ;; esac
+	case "$operation" in apply|apply-rules|enable|reconnect|disable|rollback|uninstall|confirm|recover|boot|event|tick) ;; *) exit 1 ;; esac
 	umask 077
 	runtime=$(svpn_runtime_directory) || exit 1
 	if [ ! -e "$runtime/lifecycle.lock" ] && [ ! -L "$runtime/lifecycle.lock" ]; then
@@ -12,7 +12,10 @@ svpn_lifecycle() (
 	svpn_private_file "$runtime/lifecycle.lock" || exit 1
 	exec 8<> "$runtime/lifecycle.lock" || exit 1
 	case "$operation" in event|tick) flock -n 8 || exit 4 ;; *) flock -w 3 8 || exit 4 ;; esac
-	"svpn_life_$operation" "$@"
+	case "$operation" in
+		apply-rules) svpn_life_apply_rules "$@" ;;
+		*) "svpn_life_$operation" "$@" ;;
+	esac
 )
 
 svpn_life_preflight() (
@@ -92,9 +95,23 @@ svpn_life_reconcile_ready() (
 	fi
 )
 
+svpn_life_pbr_owned() (
+	[ "$#" -eq 1 ] && svpn_private_directory "$1" || exit 1
+	: > "$1/pbr.owned"
+	[ -e "$SVPN_PRIVATE_DIR/confirmed" ] || exit 0
+	confirmed=$(svpn_tx_pointer confirmed) && svpn_tx_load "$confirmed" || exit 1
+	for record in "$tx/manifest/"*; do
+		[ -e "$record" ] || continue
+		svpn_tx_check_record "$record" || exit 1
+		kind=$(svpn_state_read "$record/kind") && target=$(svpn_state_read "$record/target") || exit 1
+		case "$kind:$target" in section:pbr.*) printf '%s\n' "${target#pbr.}" >> "$1/pbr.owned" ;; esac
+	done
+)
+
 svpn_life_obsolete() (
 	[ "$#" -eq 2 ] && svpn_private_directory "$1" || exit 1
 	work=$1 mode=$2
+	svpn_life_pbr_owned "$work" || exit 1
 	[ -e "$SVPN_PRIVATE_DIR/confirmed" ] || exit 0
 	confirmed=$(svpn_tx_pointer confirmed) && svpn_tx_load "$confirmed" || exit 1
 	for record in "$tx/manifest/"*; do
@@ -107,26 +124,30 @@ svpn_life_obsolete() (
 			svpn_state_error 'A managed resource has a later edit. Resolve it before continuing.'; exit 1;
 		}
 		case "$mode:$kind:$target" in
+			apply:section:selective-vpn.svpn_rule_*) ;;
 			apply:option:*|apply:section:selective-vpn.*) continue ;;
 			*:option:pbr.config.supported_interface)
 				logical=$(svpn_state_read "$tx/lifecycle/after.interface") || exit 1
 				[ -n "$logical" ] || logical=$(svpn_state_read "$tx/lifecycle/before.interface") || exit 1
 				[ -n "$logical" ] || continue
 				svpn_valid_interface "$logical" || exit 1
-				if awk -F '\t' -v logical="$logical" '$1=="S" { own[$2]=($4 ~ /^svpn_(console|browser|custom)$/) }
+				if awk -F '\t' -v logical="$logical" 'FILENAME ~ /pbr\.owned$/ { names[$1]=1; next }
+					$1=="S" { own[$2]=($4 in names) }
 					$1=="V" && $3=="interface" && $4==logical && !own[$2] { found=1 }
-					END { exit !found }' "$work/pbr.table"; then continue; fi
+					END { exit !found }' "$work/pbr.owned" "$work/pbr.table"; then continue; fi
 				svpn_state_mark "$work/restore_supported" 1 || exit 1 ;;
 			*:option:pbr.*)
 				# keep shared PBR settings when other policies may depend on them
-				if awk -F '\t' '$1=="S" && $3 ~ /^(policy|dns_policy|include)$/ && $4 !~ /^svpn_(console|browser|custom)$/ { found=1 }
-					END { exit !found }' "$work/pbr.table"; then continue; fi ;;
+				if awk -F '\t' 'FILENAME ~ /pbr\.owned$/ { names[$1]=1; next }
+					$1=="S" && $3 ~ /^(policy|dns_policy|include)$/ && !($4 in names) { found=1 }
+					END { exit !found }' "$work/pbr.owned" "$work/pbr.table"; then continue; fi ;;
 		esac
 		case "$target" in
 			network.svpn_vpn|openvpn.svpn_client|firewall.svpn_zone)
-				if awk -F '\t' '$1=="S" { own[$2]=($4 ~ /^svpn_(console|browser|custom)$/) }
+				if awk -F '\t' 'FILENAME ~ /pbr\.owned$/ { names[$1]=1; next }
+					$1=="S" { own[$2]=($4 in names) }
 					$1=="V" && $3=="interface" && $4=="svpn_vpn" && !own[$2] { found=1 }
-					END { exit !found }' "$work/pbr.table"; then
+					END { exit !found }' "$work/pbr.owned" "$work/pbr.table"; then
 					svpn_state_error 'Another PBR policy uses the managed VPN. Move it before removing the VPN.'; exit 1
 				fi ;;
 		esac
@@ -290,8 +311,9 @@ svpn_lifecycle_stop_pending() (
 svpn_life_finish() (
 	[ "$#" -eq 2 ] && svpn_tx_pending "$1" && svpn_private_directory "$2" || exit 1
 	id=$1 work=$2
-	if [ -e "$work/preserve_shared" ] && awk -F '\t' '$1=="S" && $3 ~ /^(policy|dns_policy|include)$/ && $4 !~ /^svpn_(console|browser|custom)$/ { found=1 }
-		END { exit !found }' "$work/pbr.table"; then
+	if [ -e "$work/preserve_shared" ] && awk -F '\t' 'FILENAME ~ /pbr\.owned$/ { names[$1]=1; next }
+		$1=="S" && $3 ~ /^(policy|dns_policy|include)$/ && !($4 in names) { found=1 }
+		END { exit !found }' "$work/pbr.owned" "$work/pbr.table"; then
 		for resource in "$work/wanted/option.pbr."*; do
 			[ -e "$resource" ] || continue
 			target=${resource##*/option.}
@@ -343,7 +365,7 @@ svpn_life_apply() (
 	}
 	networks=$(svpn_normalize_list identifier "$networks") && devices=$(svpn_normalize_list device "$devices") &&
 		custom=$(svpn_policy_destinations "$custom") || exit 1
-	[ "$console$browser" != 00 ] || [ -n "$custom" ] || { svpn_state_error 'Select at least one routing destination.'; exit 1; }
+	[ -n "${svpn_rules:-}" ] || [ "$console$browser" != 00 ] || [ -n "$custom" ] || { svpn_state_error 'Select at least one routing destination.'; exit 1; }
 	runtime=$(svpn_runtime_directory) || exit 1
 	work=$(mktemp -d "$runtime/lifecycle.XXXXXXXX") || exit 1
 	network='' policy='' id=''
@@ -375,6 +397,11 @@ svpn_life_apply() (
 		[ -e "$resource" ] || continue
 		cp "$resource" "$work/wanted/${resource##*/}" || exit 1
 	done
+	if [ -d "$policy/rules" ]; then
+		for row in "$policy/rules/"*; do
+			svpn_life_want "$work" section "selective-vpn.svpn_rule_${row##*/}" present < "$row/active" || exit 1
+		done
+	fi
 	# all interpolated values have already passed their list validators
 	{
 		printf "config settings 'svpn_active'\n\toption enabled '1'\n\toption mode '%s'\n\toption selection '%s'\n" "$mode" "$selection"
@@ -383,6 +410,7 @@ svpn_life_apply() (
 			value=$(printf '%s' "$value" | tr '\n' ' ')
 			printf "\toption %s '%s'\n" "$key" "$value"
 		done
+		[ -z "${svpn_rules:-}" ] || printf "\toption rules '1'\n"
 		printf "\toption console '%s'\n\toption browser '%s'\n\toption fallback '%s'\n\toption ipv6_acknowledged '1'\n" "$console" "$browser" "$fallback"
 	} | svpn_life_want "$work" section selective-vpn.svpn_active present || exit 1
 	printf "\toption enabled '1'\n" | svpn_life_want "$work" option selective-vpn.main.enabled present || exit 1
@@ -410,12 +438,19 @@ svpn_life_apply() (
 	svpn_life_finish "$id" "$work"
 )
 
+svpn_life_apply_rules() (
+	[ "$#" -eq 5 ] || exit 1
+	svpn_rules=1
+	svpn_life_apply "$1" "$2" "$3" '' 0 0 0 '' "$4" "$5"
+)
+
 svpn_life_enable() (
 	[ "$#" -eq 1 ] && svpn_valid_ipv4 "$1" || exit 1
 	runtime=$(svpn_runtime_directory) || exit 1
 	work=$(mktemp -d "$runtime/settings.XXXXXXXX") || exit 1
 	trap 'rm -rf -- "$work"' EXIT
 	svpn_life_active "$work" || exit 1
+	if [ "$(svpn_life_setting "$work" rules)" = 1 ]; then svpn_rules=active; fi
 	svpn_life_apply "$(svpn_life_setting "$work" mode)" "$(svpn_life_setting "$work" selection)" \
 		"$(svpn_life_setting "$work" networks)" "$(svpn_life_setting "$work" devices)" \
 		"$(svpn_life_setting "$work" console)" "$(svpn_life_setting "$work" browser)" \

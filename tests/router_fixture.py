@@ -241,17 +241,9 @@ elif command == "nft":
             {
                 "nftables": [
                     {"rule": {"comment": label}}
-                    for label in (
-                        "Console authentication",
-                        "Browser service authentication",
-                        "Custom authentication destinations",
+                    for label in re.findall(
+                        r"option name '([^']+)'", text("config/pbr")
                     )
-                    if {
-                        "Console authentication": "svpn_console",
-                        "Browser service authentication": "svpn_browser",
-                        "Custom authentication destinations": "svpn_custom",
-                    }[label]
-                    in text("config/pbr")
                 ]
             }
         )

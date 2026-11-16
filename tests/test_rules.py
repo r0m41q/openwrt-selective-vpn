@@ -1,0 +1,262 @@
+import ipaddress
+from pathlib import Path
+import unittest
+
+import test_lifecycle as lifecycle
+import test_policy as policy
+
+
+DEFAULT = "config settings 'main'\n option enabled '0'\nconfig rule 'global'\n"
+
+
+def rule(name, address="", destinations="", proto="tcp udp", ports=""):
+    return (
+        f"config rule '{name}'\n option address '{address}'\n"
+        f" option destinations '{destinations}'\n option proto '{proto}'\n"
+        f" option dest_port '{ports}'\n"
+    )
+
+
+class RuleTests(unittest.TestCase):
+    def setUp(self):
+        self.p = policy.PolicyTests(methodName="runTest")
+        self.p.setUp()
+        self.addCleanup(self.p.doCleanups)
+        self.config = self.p.f.config / "selective-vpn"
+        self.configure(DEFAULT)
+
+    def configure(self, text):
+        self.p.write(self.config, text, 0o644)
+
+    def prepare(self, check=True):
+        return self.p.call(
+            'svpn_policy_prepare "$@"', self.p.network, check=check
+        )
+
+    def plan(self):
+        return Path(self.prepare().stdout.decode().strip())
+
+    def reject(self, text):
+        self.configure(text)
+        original = (self.p.f.config / "pbr").read_bytes()
+        previews = set(self.p.f.runtime.glob("policy.*"))
+        result = self.prepare(check=False)
+        self.assertNotEqual(result.returncode, 0, text)
+        self.assertEqual(result.stdout, b"")
+        self.assertEqual((self.p.f.config / "pbr").read_bytes(), original)
+        self.assertEqual(set(self.p.f.runtime.glob("policy.*")), previews)
+
+    def test_fresh_configuration_is_disabled_and_empty(self):
+        source = policy.recovery.SOURCE.parents[2] / "etc/config/selective-vpn"
+        self.configure(source.read_text())
+        plan = self.plan()
+        self.assertIn("option enabled '0'", self.config.read_text())
+        self.assertEqual(list((plan / "resources").iterdir()), [])
+        self.assertEqual((plan / "destinations").read_text(), "")
+        self.assertEqual(
+            (plan / "rules/global/sources").read_text(), "192.168.8.0/24\n"
+        )
+
+    def test_device_routes_replace_global_and_empty_rows_opt_out(self):
+        self.configure(
+            rule(
+                "global",
+                destinations="8.8.8.8",
+                proto="udp",
+                ports="53 1000-2000",
+            )
+            + rule("phone", "192.168.8.12", "9.9.9.9", "tcp", "443")
+            + rule("excluded", "192.168.8.13")
+        )
+        plan = self.plan()
+        sources = (plan / "rules/global/sources").read_text().split()
+        coverage = set()
+        for source in sources:
+            subnet = ipaddress.ip_network(source)
+            self.assertTrue(coverage.isdisjoint(subnet))
+            coverage.update(subnet)
+        expected = set(ipaddress.ip_network("192.168.8.0/24"))
+        expected.difference_update(
+            map(ipaddress.ip_address, ["192.168.8.12", "192.168.8.13"])
+        )
+        self.assertEqual(coverage, expected)
+        text = self.p.resource(plan, "svpn_route_global")
+        self.assertIn("option proto 'udp'", text)
+        self.assertIn("option dest_port '1000-2000 53'", text)
+        self.assertIn("dest_addr '8.8.8.8'", text)
+        phone = self.p.resource(plan, "svpn_route_phone")
+        self.assertIn("src_addr '192.168.8.12'", phone)
+        self.assertIn("dest_addr '9.9.9.9'", phone)
+        self.assertNotIn("8.8.8.8", phone)
+        self.assertFalse(
+            (plan / "resources/section.pbr.svpn_route_excluded").exists()
+        )
+        self.assertTrue((plan / "rules/excluded/active").exists())
+
+    def test_multiple_lans_and_domains_use_the_same_rules(self):
+        self.p.write(
+            self.p.network / "sources", "192.168.8.0/24\n10.20.0.0/24\n"
+        )
+        self.p.write(
+            self.p.network / "lan_subnets", "192.168.8.0/24\n10.20.0.0/24\n"
+        )
+        self.configure(
+            rule("global", destinations="LOGIN.Example.com login.example.com")
+            + rule("other", "10.20.0.12", "8.8.4.4")
+        )
+        plan = self.plan()
+        self.assertEqual((plan / "dns").read_text(), "dnsmasq.nftset\n")
+        sources = (plan / "rules/global/sources").read_text().split()
+        self.assertIn("192.168.8.0/24", sources)
+        self.assertFalse(
+            any(
+                ipaddress.ip_address("10.20.0.12") in ipaddress.ip_network(s)
+                for s in sources
+            )
+        )
+        self.assertEqual(
+            (plan / "rules/global/destinations").read_text(),
+            "login.example.com\n",
+        )
+
+    def test_invalid_rules_fail_without_mutating_pbr(self):
+        for address in (
+            "192.168.8.1",
+            "192.168.8.0",
+            "192.168.8.255",
+            "10.0.0.2",
+            "phone",
+            "999.1.1.1",
+        ):
+            self.reject(DEFAULT + rule("phone", address))
+        self.reject(
+            DEFAULT + rule("one", "192.168.8.12") + rule("two", "192.168.8.12")
+        )
+        self.reject(rule("phone", "192.168.8.12"))
+        self.reject(rule("global", "192.168.8.12"))
+        self.reject(DEFAULT + rule("bad-name", "192.168.8.12"))
+        for proto in ("icmp", "all", "tcp;reboot", "17"):
+            self.reject(rule("global", destinations="8.8.8.8", proto=proto))
+        for ports in (
+            "0",
+            "65536",
+            "443-80",
+            "80-",
+            "-443",
+            "01",
+            "80,443",
+            "80 0",
+            "80-90-100",
+        ):
+            self.reject(rule("global", destinations="8.8.8.8", ports=ports))
+        self.reject(rule("global", destinations="0.0.0.0/0"))
+        self.reject(
+            DEFAULT
+            + "".join(
+                rule(f"device_{n}", f"192.168.8.{n + 10}") for n in range(32)
+            )
+        )
+
+    def test_foreign_reserved_name_and_udp_port_overlap_still_warn(self):
+        extra = "config policy 'svpn_route_other'\n"
+        self.p.pbr(
+            extra=extra + " option interface 'wan'\n option proto 'udp'\n"
+            " option dest_port '53'\n option dest_addr '8.8.8.8'\n"
+        )
+        self.configure(
+            rule("global", destinations="8.8.8.8", proto="udp", ports="53")
+        )
+        self.assertIn(
+            "possible_policy_overlap", (self.plan() / "warnings").read_text()
+        )
+
+    def test_changed_rules_invalidate_previews(self):
+        plan = self.plan()
+        self.configure(rule("global", destinations="8.8.8.8"))
+        result = self.p.call('svpn_policy_recheck "$@"', plan, check=False)
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_removing_rows_preserves_foreign_policies_and_rolls_back(self):
+        foreign = (
+            "config policy 'other'\n option name 'Other'\n"
+            " option interface 'wan'\n option dest_addr '1.1.1.1'\n"
+        )
+        self.p.pbr(extra=foreign)
+        self.configure(
+            rule("global", destinations="8.8.8.8")
+            + rule("phone", "192.168.8.12", "9.9.9.9")
+        )
+        first = self.plan()
+        identifier = self.p.f.begin()
+        self.p.call('svpn_policy_enqueue "$@"', identifier, first)
+        self.p.f.arm_apply(identifier)
+        self.p.f.confirm(identifier)
+        self.configure(rule("global", destinations="8.8.8.8"))
+        second = self.plan()
+        self.assertEqual(
+            self.p.resource(second, "svpn_route_phone"), "missing\n"
+        )
+        identifier = self.p.f.begin()
+        self.p.call('svpn_policy_enqueue "$@"', identifier, second)
+        self.p.f.arm_apply(identifier)
+        self.assertNotIn(
+            "svpn_route_phone", (self.p.f.config / "pbr").read_text()
+        )
+        self.assertIn(
+            foreign.strip().replace("\n ", "\n\t"),
+            (self.p.f.config / "pbr").read_text(),
+        )
+        self.p.f.invoke("rollback", identifier)
+        self.assertIn(
+            "svpn_route_phone", (self.p.f.config / "pbr").read_text()
+        )
+
+    def test_reserved_route_section_requires_journal_ownership(self):
+        extra = "config policy 'svpn_route_global'\n"
+        self.p.pbr(extra=extra + " option interface 'wan'\n")
+        self.reject(rule("global", destinations="8.8.8.8"))
+
+
+class RuleLifecycleTests(unittest.TestCase):
+    def test_apply_confirm_reconcile_disable_and_rollback(self):
+        life = lifecycle.LifecycleTests(methodName="runTest")
+        life.setUp()
+        self.addCleanup(life.doCleanups)
+        config = life.f.config / "selective-vpn"
+        initial = DEFAULT + rule(
+            "phone", "192.168.8.12", "9.9.9.9", "udp", "53"
+        )
+        life.write(config, initial, 0o644)
+        first = (
+            life.call(
+                "apply-rules",
+                "managed",
+                "profile.ABC12345",
+                "",
+                "1",
+                "192.168.8.2",
+            )
+            .stdout.decode()
+            .strip()
+        )
+        life.call("confirm", first)
+        self.assertIn("svpn_route_phone", (life.f.config / "pbr").read_text())
+        active = config.read_text()
+        life.write(
+            config,
+            active.replace(
+                "option destinations '9.9.9.9'",
+                "option destinations '8.8.8.8'",
+            ),
+            0o644,
+        )
+        life.call("event")
+        self.assertNotIn("8.8.8.8", (life.f.config / "pbr").read_text())
+        disabled = life.call("disable", "192.168.8.2").stdout.decode().strip()
+        life.call("confirm", disabled)
+        self.assertNotIn(
+            "svpn_route_phone", (life.f.config / "pbr").read_text()
+        )
+        restored = life.call("rollback", "192.168.8.2").stdout.decode().strip()
+        life.call("confirm", restored)
+        self.assertIn("svpn_route_phone", (life.f.config / "pbr").read_text())

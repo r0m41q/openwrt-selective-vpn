@@ -158,12 +158,6 @@ ftset\n",
                 if console == browser == "0":
                     self.assertEqual(list((plan / "resources").iterdir()), [])
                 self.discard(plan)
-        result = self.call('svpn_policy_prepare "$@"', self.network)
-        plan = Path(result.stdout.decode().strip())
-        self.assertTrue((plan / "resources/section.pbr.svpn_console").exists())
-        self.assertFalse(
-            (plan / "resources/section.pbr.svpn_browser").exists()
-        )
 
     def test_custom_destinations_are_separate_normalized_and_deduplicated(
         self,
