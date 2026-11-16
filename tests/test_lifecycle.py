@@ -271,6 +271,121 @@ ice {name} "$@"\n',
         self.assertNotEqual(self.apply(check=False).returncode, 0)
         self.assertFalse((self.f.store / "pending").exists())
 
+    def test_managed_reconnect_is_journaled_and_requires_confirmation(self):
+        previous = self.activate()
+        calls = self.root / "calls"
+        calls.write_text("")
+        identifier = (
+            self.call("reconnect", "192.168.8.2").stdout.decode().strip()
+        )
+        self.assertNotEqual(identifier, previous)
+        self.assertEqual(
+            (self.f.store / "pending").read_text().strip(), identifier
+        )
+        self.assertEqual(
+            (self.f.store / "confirmed").read_text().strip(), previous
+        )
+        mutations = [
+            line
+            for line in calls.read_text().splitlines()
+            if line.startswith("openvpn ")
+        ]
+        self.assertEqual(
+            mutations,
+            ["openvpn stop xcloud_client", "openvpn start xcloud_client"],
+        )
+        before = calls.read_text()
+        self.assertNotEqual(
+            self.call("reconnect", "192.168.8.2", check=False).returncode, 0
+        )
+        self.assertEqual(
+            [
+                line
+                for line in calls.read_text()[len(before):].splitlines()
+                if line.startswith("openvpn ")
+            ],
+            [],
+        )
+        self.call("confirm", identifier)
+        self.assertEqual(
+            (self.f.store / "confirmed").read_text().strip(), identifier
+        )
+
+    def test_reconnect_refuses_disabled_or_external_settings(self):
+        self.assertNotEqual(
+            self.call("reconnect", "192.168.8.2", check=False).returncode, 0
+        )
+        self.write(
+            self.f.config / "xcloud-bypass",
+            "config settings 'main'\n option enabled '1'\n"
+            "config settings 'xcloud_active'\n option mode 'external'\n",
+            0o644,
+        )
+        self.assertNotEqual(
+            self.call("reconnect", "192.168.8.2", check=False).returncode, 0
+        )
+        self.assertFalse((self.f.store / "pending").exists())
+        calls = self.root / "calls"
+        self.assertFalse(calls.exists() and "openvpn " in calls.read_text())
+
+    def test_failed_reconnect_preflight_keeps_active_vpn(self):
+        previous = self.activate()
+        (self.root / "bad-firewall").touch()
+        calls = self.root / "calls"
+        calls.write_text("")
+        self.assertNotEqual(
+            self.call("reconnect", "192.168.8.2", check=False).returncode, 0
+        )
+        self.assertNotIn("openvpn stop", calls.read_text())
+        self.assertTrue((self.root / "vpn-running").exists())
+        self.assertEqual(
+            (self.f.store / "confirmed").read_text().strip(), previous
+        )
+
+    def test_failed_reconnect_retains_recovery_until_vpn_can_start(self):
+        previous = self.activate()
+        (self.root / "fail-openvpn-start").touch()
+        self.assertNotEqual(
+            self.call("reconnect", "192.168.8.2", check=False).returncode, 0
+        )
+        self.assertTrue((self.f.store / "pending").exists())
+        self.assertEqual(
+            (self.f.store / "confirmed").read_text().strip(), previous
+        )
+        (self.root / "fail-openvpn-start").unlink()
+        self.call("recover")
+        self.assertFalse((self.f.store / "pending").exists())
+        self.assertTrue((self.root / "vpn-running").exists())
+
+    def test_unconfirmed_reconnect_restores_previous_configuration(self):
+        previous = self.activate()
+        before = {
+            name: (self.f.config / name).read_bytes()
+            for name in (
+                "network",
+                "firewall",
+                "openvpn",
+                "pbr",
+                "xcloud-bypass",
+            )
+        }
+        identifier = (
+            self.call("reconnect", "192.168.8.2").stdout.decode().strip()
+        )
+        self.f.expire(identifier)
+        deadline = time.monotonic() + 25
+        while (
+            self.f.store / "pending"
+        ).exists() and time.monotonic() < deadline:
+            time.sleep(0.1)
+        self.assertFalse((self.f.store / "pending").exists())
+        self.assertEqual(
+            (self.f.store / "confirmed").read_text().strip(), previous
+        )
+        self.assertTrue((self.root / "vpn-running").exists())
+        for name, contents in before.items():
+            self.assertEqual((self.f.config / name).read_bytes(), contents)
+
     def test_missing_supervisor_and_unsupported_version_refused(self):
         for name in ("no-supervisor", "version"):
             if name == "version":
@@ -482,7 +597,7 @@ n/pbr.dnsmasq'\n\tlist addnmount '/etc/hosts'\nconfig host\n\tlist addnmount \
             set((self.f.store / "transactions").iterdir()), transactions
         )
         self.assertNotIn(
-            "reload", (self.root / "calls").read_text()[len(before) :]
+            "reload", (self.root / "calls").read_text()[len(before):]
         )
 
     def test_domain_apply_and_rollback_use_native_mount_cleanup(self):

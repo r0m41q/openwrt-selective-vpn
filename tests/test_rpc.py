@@ -81,6 +81,7 @@ class RpcTests(unittest.TestCase):
                 "doctor",
                 "settings",
                 "clients",
+                "profiles",
                 "profile_summary",
                 "pending",
             },
@@ -88,6 +89,38 @@ class RpcTests(unittest.TestCase):
         self.assertNotIn("file", acl["read"])
         self.assertNotIn("file", acl["write"])
         self.assertNotIn("uci", acl["write"])
+        self.assertIn("reconnect", write)
+
+    def test_profiles_and_summary_do_not_read_credentials(self):
+        bundle = self.root / "profiles/profile.abcdefgh"
+        bundle.mkdir(parents=True)
+        (bundle / "summary").write_text("auth_required=1\ndevice=tun_xc0\n")
+        (bundle / "credentials").write_text("alice\nprivate password\n")
+        self.jshn.write_text(
+            "json_init() { :; }\n"
+            'json_add_string() { printf \'%s=%s\\n\' "$1" "$2"; }\n'
+            'json_add_boolean() { printf \'%s=%s\\n\' "$1" "$2"; }\n'
+            "json_dump() { :; }\n"
+        )
+        result = self.run_bridge("profiles")
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertIn(b"profiles=profile.abcdefgh", result.stdout)
+        self.field("id", "profile.abcdefgh")
+        result = self.run_bridge("profile_summary")
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertIn(b"credentials_saved=1", result.stdout)
+        self.assertNotIn(b"alice", result.stdout + result.stderr)
+        self.assertNotIn(b"private password", result.stdout + result.stderr)
+
+    def test_reconnect_accepts_only_a_valid_peer(self):
+        self.field("peer", "192.168.1.2")
+        self.assertEqual(self.run_bridge("reconnect").returncode, 0)
+        self.assertEqual(
+            (self.root / "lifecycle").read_text().splitlines(),
+            ["reconnect", "192.168.1.2"],
+        )
+        (self.stage / "peer").write_text("not-an-address")
+        self.assertNotEqual(self.run_bridge("reconnect").returncode, 0)
 
     def test_unknown_operation_and_stage_are_rejected(self):
         self.assertNotEqual(self.run_bridge("execute").returncode, 0)

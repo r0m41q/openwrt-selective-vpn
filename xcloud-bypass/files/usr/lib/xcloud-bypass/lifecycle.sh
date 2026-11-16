@@ -3,7 +3,7 @@
 xcb_lifecycle() (
 	[ "$#" -ge 1 ] && [ "$(id -u)" -eq 0 ] || exit 1
 	operation=$1; shift
-	case "$operation" in apply|enable|disable|rollback|uninstall|confirm|recover|boot|event|tick) ;; *) exit 1 ;; esac
+	case "$operation" in apply|enable|reconnect|disable|rollback|uninstall|confirm|recover|boot|event|tick) ;; *) exit 1 ;; esac
 	umask 077
 	runtime=$(xcb_runtime_directory) || exit 1
 	if [ ! -e "$runtime/lifecycle.lock" ] && [ ! -L "$runtime/lifecycle.lock" ]; then
@@ -219,7 +219,12 @@ xcb_life_services() (
 	if xcb_life_changed "$id" firewall; then
 		timeout -s KILL 10 fw4 check >/dev/null 2>&1 && xcb_service firewall reload || exit 1
 	fi
-	if [ "$mode" = managed ]; then xcb_service openvpn start xcloud_client || exit 1; fi
+	if [ "$mode" = managed ]; then
+		if [ "$direction" = after ] && [ "${reconnect:-0}" = 1 ]; then
+			xcb_service openvpn stop xcloud_client || exit 1
+		fi
+		xcb_service openvpn start xcloud_client || exit 1
+	fi
 	if [ -n "$mode" ]; then
 		attempt=0
 		until xcb_vpn_ready "$meta" "$client" "$tun"; do
@@ -401,6 +406,19 @@ xcb_life_enable() (
 		"$(xcb_life_setting "$work" console)" "$(xcb_life_setting "$work" browser)" \
 		"$(xcb_life_setting "$work" fallback)" "$(xcb_life_setting "$work" custom)" \
 		"$(xcb_life_setting "$work" ipv6_acknowledged)" "$1"
+)
+
+xcb_life_reconnect() (
+	[ "$#" -eq 1 ] && xcb_valid_ipv4 "$1" || exit 1
+	runtime=$(xcb_runtime_directory) || exit 1
+	work=$(mktemp -d "$runtime/reconnect.XXXXXXXX") || exit 1
+	trap 'rm -rf -- "$work"' EXIT
+	xcb_life_active "$work" || exit 1
+	[ "$(xcb_table_get "$work/app.table" main enabled)" = 1 ] &&
+		[ "$(xcb_life_setting "$work" mode)" = managed ] || exit 1
+	# restart only the managed client, after the recovery journal is armed
+	reconnect=1
+	xcb_life_enable "$1"
 )
 
 xcb_life_remove() (

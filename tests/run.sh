@@ -4,6 +4,12 @@ set -eu
 test_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 export PYTHONDONTWRITEBYTECODE=1
 
+if command -v node >/dev/null 2>&1; then
+	node --test "$test_dir/luci_test.cjs"
+else
+	printf '%s\n' 'Node.js was not found; LuCI checks were skipped.'
+fi
+
 if [ -n "${XCB_TEST_SHELL:-}" ]; then
 	python3 -m unittest discover -s "$test_dir" -p 'test_*.py' -v
 	exit

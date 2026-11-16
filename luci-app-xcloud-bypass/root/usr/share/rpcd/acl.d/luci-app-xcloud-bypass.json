@@ -3,12 +3,12 @@
 		"description": "Access XCloud Gaming bypass",
 		"read": {
 			"ubus": {
-				"xcloud-bypass": [ "job", "status", "doctor", "settings", "clients", "profile_summary", "pending" ]
+				"xcloud-bypass": [ "job", "status", "doctor", "settings", "clients", "profiles", "profile_summary", "pending" ]
 			}
 		},
 		"write": {
 			"ubus": {
-				"xcloud-bypass": [ "import_profile", "set_credentials", "preview", "apply", "confirm", "enable", "disable", "rollback", "uninstall" ]
+				"xcloud-bypass": [ "import_profile", "set_credentials", "preview", "apply", "confirm", "reconnect", "enable", "disable", "rollback", "uninstall" ]
 			}
 		}
 	}

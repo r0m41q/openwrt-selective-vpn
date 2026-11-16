@@ -23,6 +23,8 @@ define Build/Compile
 endef
 
 define Package/luci-app-xcloud-bypass/install
+	$(INSTALL_DIR) $(1)/www/luci-static/resources
+	$(CP) ./htdocs/luci-static/resources/* $(1)/www/luci-static/resources/
 	$(INSTALL_DIR) $(1)/usr/share/rpcd/ucode $(1)/usr/share/rpcd/acl.d $(1)/usr/share/luci/menu.d
 	$(INSTALL_DATA) ./root/usr/share/rpcd/ucode/xcloud-bypass $(1)/usr/share/rpcd/ucode/
 	$(INSTALL_DATA) ./root/usr/share/rpcd/acl.d/luci-app-xcloud-bypass.json $(1)/usr/share/rpcd/acl.d/

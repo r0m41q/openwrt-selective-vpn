@@ -8,7 +8,7 @@ set -eu
 operation=$1
 stage=$2
 case "$operation" in
-	status|doctor|settings|clients|profile_summary|pending|import_profile|set_credentials|preview|apply|confirm|enable|disable|rollback|uninstall) ;;
+	status|doctor|settings|clients|profiles|profile_summary|pending|import_profile|set_credentials|preview|apply|confirm|reconnect|enable|disable|rollback|uninstall) ;;
 	*) exit 1 ;;
 esac
 case "$stage" in /tmp/xcloud-rpc.[a-zA-Z0-9][a-zA-Z0-9][a-zA-Z0-9][a-zA-Z0-9][a-zA-Z0-9][a-zA-Z0-9]) ;; *) exit 1 ;; esac
@@ -19,7 +19,7 @@ case "$operation" in
 	import_profile) allowed=' profile ' ;;
 	set_credentials) allowed=' id username password ' ;;
 	preview|apply) allowed=' mode selection networks devices console browser fallback custom ack peer ' ;;
-	enable|disable|rollback|uninstall) allowed=' peer ' ;;
+	reconnect|enable|disable|rollback|uninstall) allowed=' peer ' ;;
 	*) allowed=' ' ;;
 esac
 for input in "$stage"/* "$stage"/.[!.]* "$stage"/..?*; do
@@ -48,7 +48,7 @@ for input in "$stage"/* "$stage"/.[!.]* "$stage"/..?*; do
 done
 
 case "$operation" in
-	import_profile|set_credentials|preview|settings)
+	import_profile|set_credentials|preview|settings|clients|profiles|profile_summary)
 		runtime=$(xcb_runtime_directory) || exit 1
 		if [ ! -e "$runtime/lifecycle.lock" ] && [ ! -L "$runtime/lifecycle.lock" ]; then
 			(umask 077; set -C; : > "$runtime/lifecycle.lock") 2>/dev/null || :
@@ -90,10 +90,21 @@ case "$operation" in
 	clients)
 		value=$(xcb_setup_clients) || exit 1
 		json_add_string clients "$value" ;;
+	profiles)
+		value=$(for bundle in "$XCB_PROFILE_DIR"/profile.*; do
+			[ -e "$bundle" ] || continue
+			id=${bundle##*/}
+			profile_bundle "$id" && xcb_private_file "$bundle/summary" || exit 1
+			printf '%s\n' "$id"
+		done) || exit 1
+		json_add_string profiles "$value" ;;
 	profile_summary)
 		id=$(field id) && profile_bundle "$id" && xcb_private_file "$XCB_PROFILE_DIR/$id/summary" || exit 1
+		[ "$(wc -c < "$XCB_PROFILE_DIR/$id/summary")" -le 4096 ] || exit 1
 		value=$(cat "$XCB_PROFILE_DIR/$id/summary") || exit 1
-		json_add_string summary "$value" ;;
+		json_add_string summary "$value"
+		if xcb_private_file "$XCB_PROFILE_DIR/$id/credentials"; then value=1; else value=0; fi
+		json_add_boolean credentials_saved "$value" ;;
 	pending)
 		id=$(xcb_tx_pointer pending || :)
 		json_add_string id "$id" ;;
@@ -130,7 +141,7 @@ case "$operation" in
 	confirm)
 		id=$(field id) && xcb_state_id "$id" || exit 1
 		xcb_lifecycle confirm "$id" >/dev/null || exit 1 ;;
-	enable|disable|rollback|uninstall)
+	reconnect|enable|disable|rollback|uninstall)
 		peer=$(field peer) && xcb_valid_ipv4 "$peer" || exit 1
 		xcb_lifecycle "$operation" "$peer" >/dev/null || exit 1
 		id=$(xcb_tx_pointer pending || :)
