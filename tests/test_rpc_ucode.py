@@ -35,9 +35,9 @@ class UcodeRpcTests(unittest.TestCase):
         self.worker.chmod(0o700)
         self.plugin = self.root / "plugin.uc"
         self.plugin.write_text(
-            PLUGIN.read_text().replace(
-                "/usr/lib/xcloud-bypass/rpc-bridge", str(self.worker)
-            )
+            PLUGIN.read_text()
+            .replace("/usr/lib/xcloud-bypass/rpc-bridge", str(self.worker))
+            .replace("/tmp/xcloud-rpc.", str(self.root / "stage."))
         )
 
     def run_ucode(self, body):
@@ -49,7 +49,7 @@ class UcodeRpcTests(unittest.TestCase):
             f"let api = loadfile({json.dumps(str(self.plugin))})();\n"
             "api = api['xcloud-bypass'];\n"
             "function check(value) { if (!value) die('assertion failed'); }\n"
-            + body
+            + body.replace("/tmp/xcloud-rpc.", str(self.root / "stage."))
         )
         result = subprocess.run(
             [*UCODE, str(script)], capture_output=True, timeout=10

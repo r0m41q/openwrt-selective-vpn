@@ -343,6 +343,11 @@ xcb_life_apply() (
 	xcb_life_preflight "$work" || exit 1
 	network=$(xcb_network_prepare "$mode" "$selection" "$networks" "$devices") || exit 1
 	policy=$(xcb_policy_prepare "$network" "$console" "$browser" "$fallback" "$custom") || exit 1
+	if [ -n "${xcb_review:-}" ]; then
+		[ "$(xcb_routing_digest "$network" "$policy")" = "$xcb_review" ] || {
+			xcb_state_error 'Routing inputs changed. Preview again before applying.'; exit 1;
+		}
+	fi
 	# private copies retain only metadata needed for the lifecycle
 	mkdir -m 700 "$work/network" "$work/policy" || exit 1
 	for name in interface device client vpn_mode lan_subnets; do cp "$network/$name" "$work/network/$name" || exit 1; done

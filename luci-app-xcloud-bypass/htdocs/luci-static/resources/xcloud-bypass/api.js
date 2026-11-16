@@ -3,10 +3,16 @@
 'require rpc';
 
 const parameters = {
-	settings: [], clients: [], profiles: [], status: [], pending: [],
+	settings: [], clients: [], profiles: [], leases: [], status: [], pending: [],
 	profile_summary: ['id'], import_profile: ['profile'],
 	set_credentials: ['id', 'username', 'password'],
 	reconnect: ['peer'], confirm: ['id']
+};
+parameters.preview = ['mode', 'selection', 'networks', 'devices', 'console', 'browser', 'fallback', 'custom', 'ack', 'peer', 'scope'];
+parameters.apply = parameters.preview.concat('review');
+const failures = {
+	vpn_scope: _('Preview failed. Check the VPN profile and credentials, selected LAN networks and devices, and existing VPN or firewall conflicts.'),
+	dns_policy: _('Preview failed. Check dnsmasq nftset support, client DNS settings and existing PBR policy conflicts.')
 };
 const methods = {};
 Object.keys(parameters).forEach(name => {
@@ -58,8 +64,11 @@ return baseclass.extend({
 			if (!object(state) || state.ok !== true)
 				throw new Error(_('The operation result is unavailable. Refresh status before retrying.'));
 			if (state.state === 'complete') {
-				if (!object(state.result) || (name === 'status' ? state.result.schema !== 1 : state.result.ok !== true))
+				if (!object(state.result) || (name === 'status' ? state.result.schema !== 1 : state.result.ok !== true)) {
+					if (object(state.result) && Object.prototype.hasOwnProperty.call(failures, state.result.code))
+						throw new Error(failures[state.result.code]);
 					throw new Error(_('The operation failed. Check diagnostics over SSH.'));
+				}
 				return state.result;
 			}
 			if (state.state !== 'running')

@@ -8,7 +8,7 @@ set -eu
 operation=$1
 stage=$2
 case "$operation" in
-	status|doctor|settings|clients|profiles|profile_summary|pending|import_profile|set_credentials|preview|apply|confirm|reconnect|enable|disable|rollback|uninstall) ;;
+	status|doctor|settings|clients|profiles|leases|profile_summary|pending|import_profile|set_credentials|preview|apply|confirm|reconnect|enable|disable|rollback|uninstall) ;;
 	*) exit 1 ;;
 esac
 case "$stage" in /tmp/xcloud-rpc.[a-zA-Z0-9][a-zA-Z0-9][a-zA-Z0-9][a-zA-Z0-9][a-zA-Z0-9][a-zA-Z0-9]) ;; *) exit 1 ;; esac
@@ -18,7 +18,7 @@ case "$operation" in
 	profile_summary|confirm) allowed=' id ' ;;
 	import_profile) allowed=' profile ' ;;
 	set_credentials) allowed=' id username password ' ;;
-	preview|apply) allowed=' mode selection networks devices console browser fallback custom ack peer ' ;;
+	preview|apply) allowed=' mode selection networks devices console browser fallback custom ack peer scope review ' ;;
 	reconnect|enable|disable|rollback|uninstall) allowed=' peer ' ;;
 	*) allowed=' ' ;;
 esac
@@ -48,7 +48,7 @@ for input in "$stage"/* "$stage"/.[!.]* "$stage"/..?*; do
 done
 
 case "$operation" in
-	import_profile|set_credentials|preview|settings|clients|profiles|profile_summary)
+	import_profile|set_credentials|preview|settings|clients|profiles|leases|profile_summary|pending)
 		runtime=$(xcb_runtime_directory) || exit 1
 		if [ ! -e "$runtime/lifecycle.lock" ] && [ ! -L "$runtime/lifecycle.lock" ]; then
 			(umask 077; set -C; : > "$runtime/lifecycle.lock") 2>/dev/null || :
@@ -59,7 +59,7 @@ case "$operation" in
 esac
 
 field() {
-	case "$1" in mode|selection|networks|devices|console|browser|fallback|custom|ack|peer|profile|username|password|id) ;; *) return 1 ;; esac
+	case "$1" in mode|selection|networks|devices|console|browser|fallback|custom|ack|peer|scope|review|profile|username|password|id) ;; *) return 1 ;; esac
 	[ -e "$stage/$1" ] || { printf ''; return 0; }
 	xcb_private_file "$stage/$1" || return 1
 	[ "$(wc -c < "$stage/$1")" -le 32768 ] || return 1
@@ -90,6 +90,9 @@ case "$operation" in
 	clients)
 		value=$(xcb_setup_clients) || exit 1
 		json_add_string clients "$value" ;;
+	leases)
+		value=$(xcb_routing_leases) || exit 1
+		json_add_string leases "$value" ;;
 	profiles)
 		value=$(for bundle in "$XCB_PROFILE_DIR"/profile.*; do
 			[ -e "$bundle" ] || continue
@@ -106,7 +109,21 @@ case "$operation" in
 		if xcb_private_file "$XCB_PROFILE_DIR/$id/credentials"; then value=1; else value=0; fi
 		json_add_boolean credentials_saved "$value" ;;
 	pending)
-		id=$(xcb_tx_pointer pending || :)
+		id=''
+		if [ -e "$XCB_PRIVATE_DIR/pending" ] || [ -L "$XCB_PRIVATE_DIR/pending" ]; then
+			id=$(xcb_tx_pointer pending) && xcb_tx_load "$id" || exit 1
+			state=$(xcb_state_read "$tx/state") || exit 1
+			case "$state" in preparing|armed|applying|applied|awaiting_confirmation|recovering|runtime_recovery|conflict) ;; *) exit 1 ;; esac
+			json_add_string state "$state"
+			if [ -e "$tx/deadline" ] && [ "$(xcb_state_read "$tx/boot")" = "$(xcb_boot_id)" ]; then
+				deadline=$(xcb_state_read "$tx/deadline") && xcb_valid_uint "$deadline" 999999999 || exit 1
+				now=$(xcb_uptime) && xcb_valid_uint "$now" 999999999 || exit 1
+				remaining=$((deadline - now))
+				[ "$remaining" -ge 0 ] || remaining=0
+				[ "$remaining" -le "$XCB_CONFIRM_SECONDS" ] || remaining=$XCB_CONFIRM_SECONDS
+				json_add_int seconds_remaining "$remaining"
+			fi
+		fi
 		json_add_string id "$id" ;;
 	import_profile)
 		xcb_private_file "$stage/profile" || exit 1
@@ -130,10 +147,21 @@ case "$operation" in
 		ack=$(field ack) && peer=$(field peer) || exit 1
 		[ "$ack" = 1 ] && xcb_valid_ipv4 "$peer" && xcb_valid_bool "$console" &&
 			xcb_valid_bool "$browser" && xcb_valid_bool "$fallback" || exit 1
+		devices=$(xcb_normalize_list device "$devices") && networks=$(xcb_normalize_list identifier "$networks") &&
+			custom=$(xcb_policy_destinations "$custom") || exit 1
+		scope=$(field scope) || exit 1
+		case "$scope" in
+			lan) [ -z "$devices" ] || exit 1 ;;
+			devices) [ -n "$devices" ] || exit 1 ;;
+			*) exit 1 ;;
+		esac
+		[ "$console$browser" != 00 ] || [ -n "$custom" ] || exit 1
 		if [ "$operation" = preview ]; then
-			value=$(xcb_setup_preview "$mode" "$selection" "$networks" "$devices" "$console" "$browser" "$fallback" "$custom") || exit 1
-			json_add_string preview "$value"
+			xcb_routing_preview "$mode" "$selection" "$networks" "$devices" "$console" "$browser" "$fallback" "$custom"
+			exit
 		else
+			xcb_review=$(field review) || exit 1
+			printf '%s\n' "$xcb_review" | grep -Eq '^[a-f0-9]{64}$' || exit 1
 			xcb_lifecycle apply "$mode" "$selection" "$networks" "$devices" "$console" "$browser" "$fallback" "$custom" "$ack" "$peer" >/dev/null || exit 1
 			id=$(xcb_tx_pointer pending || :)
 			json_add_string id "$id"

@@ -32,6 +32,8 @@ class RpcTests(unittest.TestCase):
             xcb_private_file() {{ [ -f "$1" ] && [ ! -L "$1" ]; }}
             xcb_valid_ipv4() {{ [ "$1" = 192.168.1.2 ]; }}
             xcb_valid_bool() {{ [ "$1" = 0 ] || [ "$1" = 1 ]; }}
+            xcb_normalize_list() {{ printf '%s' "$2"; }}
+            xcb_policy_destinations() {{ printf '%s' "$1"; }}
             xcb_state_id() {{ [ "$1" = valid-id ]; }}
             xcb_setup_preview() {{ printf 'Safe scope\\n'; }}
             xcb_lifecycle() {{ printf '%s\\n' "$@" > "$test_root/lifecycle"; }}
@@ -82,6 +84,7 @@ class RpcTests(unittest.TestCase):
                 "settings",
                 "clients",
                 "profiles",
+                "leases",
                 "profile_summary",
                 "pending",
             },
@@ -145,6 +148,8 @@ class RpcTests(unittest.TestCase):
             "fallback": "0",
             "ack": "1",
             "peer": "192.168.1.2",
+            "scope": "lan",
+            "review": "a" * 64,
         }.items():
             self.field(name, value)
         self.assertEqual(self.run_bridge("apply").returncode, 0)
@@ -171,6 +176,28 @@ class RpcTests(unittest.TestCase):
         (self.stage / "console").write_text(f"$(touch {marker})")
         self.assertNotEqual(self.run_bridge("apply").returncode, 0)
         self.assertFalse(marker.exists())
+
+    def test_explicit_scope_and_review_cannot_be_omitted(self):
+        for name, value in {
+            "mode": "external",
+            "selection": "client",
+            "console": "1",
+            "browser": "0",
+            "fallback": "0",
+            "ack": "1",
+            "peer": "192.168.1.2",
+            "scope": "devices",
+            "review": "a" * 64,
+        }.items():
+            self.field(name, value)
+        self.assertNotEqual(self.run_bridge("apply").returncode, 0)
+        (self.stage / "scope").write_text("lan")
+        (self.stage / "review").write_text("")
+        self.assertNotEqual(self.run_bridge("apply").returncode, 0)
+        (self.stage / "review").write_text("a" * 64)
+        self.assertEqual(self.run_bridge("apply").returncode, 0)
+        self.field("devices", "192.168.1.2")
+        self.assertNotEqual(self.run_bridge("apply").returncode, 0)
 
     def test_credentials_are_stdin_only_and_id_is_bounded(self):
         bundle = self.root / "profiles/profile.abcdefgh"

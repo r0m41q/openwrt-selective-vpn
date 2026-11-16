@@ -10,5 +10,11 @@
 		"order": 10,
 		"action": { "type": "view", "path": "xcloud-bypass/vpn" },
 		"depends": { "acl": [ "luci-app-xcloud-bypass" ] }
+	},
+	"admin/services/xcloud-bypass/routing": {
+		"title": "Routing",
+		"order": 20,
+		"action": { "type": "view", "path": "xcloud-bypass/routing" },
+		"depends": { "acl": [ "luci-app-xcloud-bypass" ] }
 	}
 }

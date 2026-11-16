@@ -115,8 +115,8 @@ ice {name} "$@"\n',
             + f'PATH={shlex.quote(str(bindir))}:"$PATH"; export PATH; '
             + """
             umask 077
-            for library in profile discover network policy runtime lifecycle;\
- do . "$XCB_LIBRARY_DIR/$library.sh"; done
+            for library in profile discover network policy routing runtime \\
+ lifecycle; do . "$XCB_LIBRARY_DIR/$library.sh"; done
         """
         )
         with self.f.shim.open("a") as stream:

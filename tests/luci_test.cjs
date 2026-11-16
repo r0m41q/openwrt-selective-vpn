@@ -256,3 +256,177 @@ test('reconnect failure does not offer confirmation', async () => {
 	assert.match(f.view.feedback.textContent, /Reconnect failed/);
 	assert.ok(!f.calls.some(call => call[0] === 'confirm'));
 });
+
+const routingLogic = () => load('xcloud-bypass/routing.js', { baseclass: { extend: value => value } });
+const vpnSelection = { mode: 'managed', selection: 'profile.abcdefgh' };
+const routingForm = changes => ({ scope: 'lan', networks: '', devices: '', console: true, browser: false,
+	fallback: false, custom: '', ack: true, peer: '192.168.8.2', ...changes });
+const reviewResult = changes => ({ scope: 'lan', sources: '192.168.8.0/24', lan_networks: 'lan',
+	lan_subnets: '192.168.8.0/24', interface: 'xcloud_vpn', dns: 'dnsmasq.nftset',
+	destinations: 'xsts.auth.xboxlive.com', warnings: '', review: 'a'.repeat(64), ...changes });
+
+test('routing options preserve explicit scope, normalize devices and keep modes independent', () => {
+	const logic = routingLogic();
+	let args = logic.options(routingForm({ devices: 'hidden old value' }), vpnSelection);
+	assert.equal(args[3], '');
+	assert.deepEqual(Array.from(args.slice(4, 7)), ['1', '0', '0']);
+	args = logic.options(routingForm({ scope: 'devices', devices: 'XBOX\n192.168.8.12 XBOX', browser: true }), vpnSelection);
+	assert.equal(args[3], 'xbox\n192.168.8.12');
+	assert.deepEqual(Array.from(args.slice(4, 7)), ['1', '1', '0']);
+	assert.equal(args[10], 'devices');
+	args = logic.options(routingForm({ console: false, browser: true, fallback: true }), vpnSelection);
+	assert.deepEqual(Array.from(args.slice(4, 7)), ['0', '1', '0']);
+	args = logic.options(routingForm({ console: false, custom: 'EXAMPLE.ORG 198.51.100.0/24' }), vpnSelection);
+	assert.equal(args[7], 'example.org\n198.51.100.0/24');
+});
+
+test('empty selected-device lists and invalid routing fields are rejected', () => {
+	const logic = routingLogic();
+	for (const changes of [
+		{ scope: 'devices', devices: '' }, { scope: 'devices', devices: ' \n' },
+		{ scope: 'devices', devices: '999.1.1.1' }, { scope: 'devices', devices: '$(id)' },
+		{ networks: 'lan;id' }, { custom: '0.0.0.0/0' }, { custom: '192.168.8.3/24' },
+		{ custom: '*.example.org' }, { console: false, browser: false }, { ack: false },
+		{ peer: 'not-an-address' }, { scope: 'devices', devices: 'x'.repeat(4097) }
+	]) assert.throws(() => logic.options(routingForm(changes), vpnSelection));
+	assert.throws(() => logic.options(routingForm(), {}), /Choose a VPN/);
+});
+
+test('malformed previews cannot authorize apply', () => {
+	const logic = routingLogic();
+	const args = logic.options(routingForm(), vpnSelection);
+	for (const changes of [{ review: '' }, { scope: 'devices' }, { sources: '' },
+		{ sources: '0.0.0.0/0' }, { destinations: '$(id)' }, { dns: 'unsupported' }])
+		assert.throws(() => logic.preview(reviewResult(changes), args));
+});
+
+function routingFixture(handler = () => {}, writable = true, data = [{}, { leases: '192.168.8.12\txbox' }, { id: '' }]) {
+	const calls = [];
+	const events = {};
+	const timers = new Map();
+	let nextTimer = 0, now = 0;
+	const view = load('view/xcloud-bypass/routing.js', {
+		view: { extend: value => value }, routing: routingLogic(),
+		L: { hasViewPermission: () => writable, url: value => '/' + value },
+		Date: { now: () => now },
+		window: {
+			addEventListener: (event, fn) => { events[event] = fn; },
+			setTimeout: fn => { timers.set(++nextTimer, fn); return nextTimer; },
+			clearTimeout: id => timers.delete(id)
+		},
+		E: (tag, attributes, children) => new Element(tag, attributes, children),
+		api: { selection: () => vpnSelection, call: async (...args) => {
+			calls.push(args);
+			return handler(...args);
+		} }
+	});
+	const root = view.render(data);
+	view.peer.value = '192.168.8.2'; view.ack.checked = true;
+	return { view, calls, root, events, timers, advance: seconds => {
+		now += seconds * 1000;
+		const current = [...timers.values()]; timers.clear(); current.forEach(fn => fn());
+	} };
+}
+
+test('routing defaults to all LAN, console on, browser off and adds only chosen DHCP addresses', async () => {
+	const f = routingFixture(() => reviewResult());
+	assert.equal(f.view.scope.value, 'lan');
+	assert.equal(f.view.console.checked, true);
+	assert.equal(f.view.browser.checked, false);
+	assert.equal(f.view.devices.value, '');
+	assert.equal(f.view.applyButton.disabled, true);
+	f.view.scope.value = 'devices';
+	f.view.suggestions.value = '192.168.8.12';
+	await f.view.addDevice.events.click();
+	assert.equal(f.view.devices.value, '192.168.8.12');
+	assert.ok(!f.calls.length);
+	assert.ok(descendants(f.root).every(node => node.innerHTML === undefined));
+});
+
+test('preview errors for unsupported DNS and conflicts keep apply disabled', async () => {
+	for (const code of ['vpn_scope', 'dns_policy']) {
+		const api = apiFixture(method => method === 'job' ? { ok: true, state: 'complete', result: { ok: false, code, error: 'private-secret' } } : { ok: true, job: '1' }).api;
+		await assert.rejects(api.call('preview'), error => /Preview failed/.test(error.message) && !error.message.includes('private-secret'));
+	}
+	const f = routingFixture(() => { throw new Error('Preview failed. Check DNS.'); });
+	await f.view.run(() => f.view.preview());
+	assert.equal(f.view.applyButton.disabled, true);
+	assert.ok(!f.calls.some(call => call[0] === 'apply'));
+});
+
+test('empty selected devices do not send preview or apply requests', async () => {
+	const f = routingFixture(() => reviewResult());
+	f.view.scope.value = 'devices'; f.view.devices.value = ' \n';
+	await f.view.run(() => f.view.preview());
+	await f.view.run(() => f.view.apply());
+	assert.equal(f.calls.length, 0);
+	assert.equal(f.view.scope.value, 'devices');
+});
+
+test('edits invalidate preview and apply also checks values without input events', async () => {
+	const f = routingFixture(() => reviewResult());
+	await f.view.run(() => f.view.preview());
+	assert.equal(f.view.applyButton.disabled, false);
+	f.view.custom.value = 'example.org';
+	f.view.custom.events.input();
+	assert.equal(f.view.applyButton.disabled, true);
+	await f.view.run(() => f.view.preview());
+	f.view.browser.checked = true;
+	await f.view.run(() => f.view.apply());
+	assert.ok(!f.calls.some(call => call[0] === 'apply'));
+});
+
+test('apply sends reviewed arguments and requires confirmation of the returned transaction', async () => {
+	const id = 'b'.repeat(32);
+	const f = routingFixture(method => method === 'preview' ? reviewResult() :
+		method === 'apply' ? { ok: true, id } : method === 'pending' ?
+			{ ok: true, id, state: 'awaiting_confirmation', seconds_remaining: 60 } : { ok: true });
+	await f.view.run(() => f.view.preview());
+	await f.view.run(() => f.view.apply());
+	const applied = f.calls.find(call => call[0] === 'apply');
+	assert.equal(applied.at(-1), 'a'.repeat(64));
+	assert.equal(applied[11], 'lan');
+	assert.equal(f.view.confirmButton.disabled, false);
+	assert.equal(f.view.previewButton.disabled, true);
+	await f.view.run(() => f.view.confirm());
+	assert.ok(f.calls.some(call => call[0] === 'confirm' && call[1] === id));
+	assert.equal(f.view.pending.id, '');
+	assert.equal(f.timers.size, 0);
+});
+
+test('expired confirmation and navigation stop the countdown without confirming', async () => {
+	const pending = { id: 'b'.repeat(32), state: 'awaiting_confirmation', seconds_remaining: 2 };
+	const f = routingFixture(() => {}, true, [{}, null, pending]);
+	assert.equal(f.view.confirmButton.disabled, false);
+	f.advance(3);
+	assert.equal(f.view.confirmButton.disabled, true);
+	assert.equal(f.timers.size, 0);
+	await f.view.run(() => f.view.confirm());
+	assert.equal(f.calls.length, 0);
+	assert.match(f.view.feedback.textContent, /window has ended/);
+	f.view.setPending({ ...pending, seconds_remaining: 60 });
+	f.events.pagehide();
+	assert.equal(f.timers.size, 0);
+});
+
+test('lost apply responses recover pending state and never retry apply automatically', async () => {
+	const f = routingFixture(method => {
+		if (method === 'preview') return reviewResult();
+		if (method === 'apply') throw new Error('Transport lost.');
+		return { id: 'b'.repeat(32), state: 'awaiting_confirmation', seconds_remaining: 60 };
+	});
+	await f.view.run(() => f.view.preview());
+	await f.view.run(() => f.view.apply());
+	assert.equal(f.calls.filter(call => call[0] === 'apply').length, 1);
+	assert.equal(f.view.confirmButton.disabled, false);
+	assert.match(f.view.feedback.textContent, /result was lost/);
+});
+
+test('readonly and unavailable recovery status disable routing mutations', () => {
+	for (const [writable, data] of [[false, [{}, null, { id: '' }]], [true, [{}, null, null]]]) {
+		const f = routingFixture(() => {}, writable, data);
+		assert.equal(f.view.previewButton.disabled, true);
+		assert.equal(f.view.applyButton.disabled, true);
+		assert.equal(f.view.confirmButton.disabled, true);
+	}
+});
