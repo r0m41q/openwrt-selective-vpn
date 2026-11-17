@@ -11,6 +11,7 @@ umask 077
 
 readonly backup='/etc/selective-vpn-install'
 readonly world='/etc/apk/world'
+readonly apk_arch='/etc/apk/arch'
 readonly config='/etc/config'
 readonly init='/etc/init.d'
 readonly private='/etc/selective-vpn'
@@ -32,6 +33,21 @@ recover=0
 die() {
 	printf '%s\n' "$*" >&2
 	exit 1
+}
+
+step() {
+	printf '%s\n' "$*"
+}
+
+# show what apk said, since the staging files are removed on exit
+show_log() {
+	[ ! -s "$1" ] || tail -n 20 "$1" >&2
+}
+
+die_log() {
+	show_log "$1"
+	shift
+	die "$@"
 }
 
 usage() {
@@ -410,10 +426,12 @@ recovery() {
 	cp -p "$world" "$work/failed-world" || return 1
 	replace_file "$backup/world" "$world" || return 1
 	if ! apk_run --no-network add --simulate "$@" > "$work/recovery-plan" 2>&1; then
+		show_log "$work/recovery-plan"
 		replace_file "$work/failed-world" "$world"
 		return 1
 	fi
 	if ! apk_run --no-network add "$@" > "$work/recovery-log" 2>&1; then
+		show_log "$work/recovery-log"
 		return 1
 	fi
 	replace_file "$backup/world" "$world" || return 1
@@ -490,7 +508,7 @@ if [ -n "$needed" ]; then
 	apk --no-interactive update > /dev/null && apk --no-interactive add $needed > /dev/null ||
 		die 'Cannot install the needed packages.'
 fi
-for tool in awk cat chmod cmp cp df du id mkdir mktemp mv nslookup readlink rm rmdir sha256sum sort stat sync wc; do
+for tool in awk cat chmod cmp cp df du grep head id mkdir mktemp mv nslookup readlink rm rmdir sha256sum sort stat sync tail wc; do
 	command -v "$tool" > /dev/null 2>&1 || die "Missing required tool: $tool"
 done
 if [ "$recover" -eq 0 ]; then
@@ -531,12 +549,15 @@ if [ -e "$backup" ] || [ -L "$backup" ]; then
 		safe_file "$backup/before" || die "An interrupted installation exists at $backup. Run sh install.sh --recover."
 	cp -p "$backup/first-installed" "$work/first-installed" || die 'Cannot read the installation history.'
 fi
+step 'Checking the router.'
 ubus call system board > "$work/board" || die 'Cannot identify this router.'
 [ "$(jsonfilter -i "$work/board" -e '@.release.distribution')" = OpenWrt ] || die 'OpenWrt is required.'
 firmware=$(jsonfilter -i "$work/board" -e '@.release.version') || die 'Cannot read the OpenWrt version.'
 case "$firmware" in 25.12.[0-9]|25.12.[0-9][0-9]) ;; *) die 'This installer currently supports stable OpenWrt 25.12 releases.' ;; esac
-architecture=$(apk --print-arch) || die 'Cannot read the APK architecture.'
-case "$architecture" in ''|*[!a-zA-Z0-9_-]*) die 'Invalid APK architecture.' ;; esac
+# packages use the arches in /etc/apk/arch; apk --print-arch names only the cpu, as in mipsel
+awk 'NF' "$apk_arch" > "$work/arches" 2>/dev/null && [ -s "$work/arches" ] || die 'Cannot read the APK architecture.'
+! grep -q '[^a-zA-Z0-9_-]' "$work/arches" || die 'Invalid APK architecture.'
+architecture=$(head -n 1 "$work/arches")
 space / 8192 && space "$temporary" 8192 || die 'At least 8 MiB free flash and temporary space are required.'
 manifest > "$work/before" || die 'Cannot read installed packages.'
 case "$(installed_version pbr)" in ''|1.2.2-r[0-9]*) ;; *) die 'PBR 1.2.2 is required by this backend.' ;; esac
@@ -553,9 +574,11 @@ luci='not installed'
 snapshot "$work/before-config" || die 'Cannot back up configuration safely.'
 cp -p "$world" "$work/world"
 check_dns
+step 'Downloading the release.'
 release_sums
 release_key
-apk_run update > "$work/repositories" 2>&1 || die 'Package repositories are unavailable or cannot be verified.'
+step 'Updating package lists.'
+apk_run update > "$work/repositories" 2>&1 || die_log "$work/repositories" 'Package repositories are unavailable or cannot be verified.'
 fetch_release selective-vpn
 [ "$with_luci" -eq 0 ] || fetch_release luci-app-selective-vpn
 set -- "$work/new/selective-vpn-$version.apk"
@@ -574,18 +597,21 @@ if [ "$dns_change" -eq 1 ]; then
 	printf '%s\n' dnsmasq-full >> "$work/targets"
 fi
 for argument; do printf '%s\n' "$argument"; done > "$work/request"
-apk_run add --simulate "$@" > "$work/plan" 2>&1 || die 'APK cannot install these packages without conflicts.'
-parse_plan "$work/plan" > "$work/allowed" || die 'Installation would change an unrelated package, downgrade a package, or install an unsupported PBR version.'
+step 'Planning package changes.'
+apk_run add --simulate "$@" > "$work/plan" 2>&1 || die_log "$work/plan" 'APK cannot install these packages without conflicts.'
+parse_plan "$work/plan" > "$work/allowed" || die_log "$work/plan" 'Installation would change an unrelated package, downgrade a package, or install an unsupported PBR version.'
 # feed packages are trusted through the signed index, so they stay in the apk cache
 set --
 while read -r name new_version; do
 	case "$name" in selective-vpn|luci-app-selective-vpn) continue ;; esac
 	[ "$new_version" = - ] || set -- "$@" "$name"
 done < "$work/allowed"
+step 'Downloading packages.'
 if [ "$#" -gt 0 ]; then
-	apk_run cache download "$@" > /dev/null || die 'Cannot download the installation packages.'
+	apk_run cache download "$@" > "$work/download" 2>&1 || die_log "$work/download" 'Cannot download the installation packages.'
 fi
 awk '$2 != "-" { print $1 }' "$work/allowed" >> "$work/targets"
+step 'Saving recovery copies.'
 while read -r name new_version; do
 	old_version=$(installed_version "$name")
 	[ -n "$old_version" ] || continue
@@ -603,8 +629,8 @@ while read -r name new_version; do
 		[ "$(jsonfilter -i "$work/metadata" -e '@.info.version')" = "$new_version" ] ||
 		die 'A downloaded package does not match the plan.'
 	package_arch=$(jsonfilter -i "$work/metadata" -e '@.info.arch') || die 'Package architecture is missing.'
-	[ "$package_arch" = noarch ] || [ "$package_arch" = "$architecture" ] ||
-		die 'Cached package architecture does not match.'
+	[ "$package_arch" = noarch ] || grep -qxF "$package_arch" "$work/arches" ||
+		die "Package $name is built for $package_arch, not $architecture."
 	bytes=$(jsonfilter -i "$work/metadata" -e '@.info["installed-size"]') || die 'Package size is missing.'
 	case "$bytes" in ''|*[!0-9]*|??????????*) die 'Invalid package size.' ;; esac
 	required_kib=$((required_kib + (bytes + 1023) / 1024))
@@ -634,7 +660,7 @@ done
 # install offline from the cached index, so DNS and repository changes cannot alter the proposal
 set --
 while read -r argument; do set -- "$@" "$argument"; done < "$work/request"
-apk_run --no-network add --simulate "$@" > "$work/final-plan" 2>&1 || die 'Cached packages no longer satisfy the installation.'
+apk_run --no-network add --simulate "$@" > "$work/final-plan" 2>&1 || die_log "$work/final-plan" 'Cached packages no longer satisfy the installation.'
 parse_plan "$work/final-plan" > "$work/final-allowed" || die 'The cached package proposal is unsafe.'
 sort "$work/allowed" > "$work/expected"
 sort "$work/final-allowed" > "$work/proposed"
@@ -652,10 +678,11 @@ fi
 : > "$backup/armed"
 sync
 armed=1
+step 'Installing packages.'
 install_result=0
 apk_run --no-network add "$@" > "$work/install-log" 2>&1 || install_result=$?
 snapshot "$backup/after-config" || die 'Cannot record the installation result.'
-[ "$install_result" -eq 0 ] || die 'APK installation failed.'
+[ "$install_result" -eq 0 ] || die_log "$work/install-log" 'APK installation failed.'
 # later APK checks of the installed packages need the key in the system keyring
 if [ "$key_new" -eq 1 ]; then
 	cp "$work/release.pem" "$trusted_key" && chmod 644 "$trusted_key" || die 'Cannot save the release signing key.'
@@ -668,6 +695,7 @@ done
 if [ "$dns_change" -eq 1 ]; then
 	"$init/dnsmasq" restart > /dev/null 2>&1 || die 'Cannot restart dnsmasq-full.'
 fi
+step 'Checking DNS.'
 dns_features && dns_probe || die 'The DNS check failed after installation.'
 ubus call service list '{"name":"dnsmasq"}' > "$work/dns-service" && dns_listener ||
 	die 'The DNS listeners failed verification after installation.'

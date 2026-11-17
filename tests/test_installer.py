@@ -56,6 +56,7 @@ class InstallerTests(unittest.TestCase):
         self.packages = {"dnsmasq": "2.93-r2", "uci": "1-r1"}
         self.save_packages()
         (self.root / "etc/apk/world").write_text("dnsmasq\nuci\n")
+        (self.root / "etc/apk/arch").write_text("mipsel_24kc\n")
         for table, inode in (("tcp", 123), ("udp", 124)):
             (self.root / "proc/net" / table).write_text(
                 "header\n"
@@ -104,6 +105,7 @@ class InstallerTests(unittest.TestCase):
         for path in (
             "/etc/selective-vpn-install",
             "/etc/apk/world",
+            "/etc/apk/arch",
             "/etc/apk/keys",
             "/etc/config",
             "/etc/init.d",

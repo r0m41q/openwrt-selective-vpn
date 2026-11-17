@@ -25,12 +25,17 @@ def record(*values):
         stream.write(json.dumps(values) + "\n")
 
 
+# like a mips router, where apk --print-arch says mipsel
+def feed_arch():
+    return "x86_64" if flag("bad-arch") else "mipsel_24kc"
+
+
 def package(name, version):
     return {
         "info": {
             "name": name,
             "version": version,
-            "arch": "noarch" if "selective-vpn" in name else "x86_64",
+            "arch": "noarch" if "selective-vpn" in name else feed_arch(),
             "installed-size": 4096,
         }
     }
@@ -152,7 +157,7 @@ if command == "apk":
         print("apk-tools 3.0.5, compiled for x86_64")
         sys.exit()
     if args == ["--print-arch"]:
-        print("bad/arch" if flag("bad-arch") else "x86_64")
+        print("mipsel")
         sys.exit()
     operation_index = next(
         i
