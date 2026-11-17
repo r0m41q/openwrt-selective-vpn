@@ -2,17 +2,18 @@
 
 Selective VPN sends chosen destinations from your LAN through an OpenVPN connection on an OpenWrt router. Everything else keeps using your normal internet connection. You set it up in the router's web interface.
 
-It targets OpenWrt 25.12 with LuCI, firewall4 and PBR. No release has been published yet, and live routing has not been verified on a router.
+It targets OpenWrt 25.12 with LuCI, firewall4 and PBR. Live routing has not been verified on a router yet.
 
 ## Install
 
 You need SSH access to the router as root and working package feeds. On the router, run:
 
 ```sh
-wget -qO /tmp/install.sh https://github.com/r0m41q/openwrt-selective-vpn/releases/latest/download/install.sh && sh /tmp/install.sh
+apk update && apk add curl ca-bundle
+curl -fsSLo /tmp/install.sh https://github.com/r0m41q/openwrt-selective-vpn/releases/latest/download/install.sh && sh /tmp/install.sh
 ```
 
-The installer checks the router, shows every package change and asks before installing. It adds curl and LuCI if they are missing. It replaces dnsmasq with dnsmasq-full if domain routing needs it, and trusts the release signing key the first time. Routing stays off until you set it up. More options are in [installation](docs/installation.md).
+The installer checks the router, shows every package change and asks before installing. It adds any other missing tools and LuCI. It replaces dnsmasq with dnsmasq-full if domain routing needs it, and trusts the release signing key the first time. Routing stays off until you set it up. More options are in [installation](docs/installation.md).
 
 ## Set up
 

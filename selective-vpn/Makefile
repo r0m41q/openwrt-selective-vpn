@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=selective-vpn
 PKG_VERSION:=0.1.0
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 PKG_LICENSE:=MIT
 
 include $(INCLUDE_DIR)/package.mk
@@ -14,7 +14,7 @@ define Package/selective-vpn
   TITLE:=Selective VPN routing
   URL:=https://github.com/r0m41q/openwrt-selective-vpn
   PKGARCH:=all
-  DEPENDS:=+pbr +openvpn-openssl +firewall4 +uci +ubus +jshn +jsonfilter +ip-full +nftables-json +flock +ss +coreutils-timeout
+  DEPENDS:=+pbr +openvpn-openssl +firewall4 +uci +ubus +jshn +jsonfilter +ip-full +nftables-json +flock +ss +coreutils-stat +coreutils-timeout
 endef
 
 define Package/selective-vpn/description

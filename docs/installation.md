@@ -5,7 +5,8 @@
 Log in to the router over SSH as root and run:
 
 ```sh
-wget -qO /tmp/install.sh https://github.com/r0m41q/openwrt-selective-vpn/releases/latest/download/install.sh && sh /tmp/install.sh
+apk update && apk add curl ca-bundle
+curl -fsSLo /tmp/install.sh https://github.com/r0m41q/openwrt-selective-vpn/releases/latest/download/install.sh && sh /tmp/install.sh
 ```
 
 Options:

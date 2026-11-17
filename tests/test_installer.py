@@ -323,17 +323,19 @@ class InstallerTests(unittest.TestCase):
             )
         )
 
-    def test_missing_bootstrap_tool(self):
+    def test_missing_busybox_tool(self):
         self.isolate()
-        (self.root / "bin/openssl").unlink()
+        (self.root / "bin/cmp").unlink()
         result = self.run_install("y\n")
-        self.assertIn("Missing required tool: openssl", result.stderr.decode())
+        self.assertIn("Missing required tool: cmp", result.stderr.decode())
 
-    def test_missing_curl_is_offered_before_anything_else(self):
+    def test_missing_packages_are_offered_before_anything_else(self):
         self.isolate()
-        (self.root / "bin/curl").unlink()
+        for name in ("curl", "openssl"):
+            (self.root / "bin" / name).unlink()
         result = self.run_install("n\n")
-        self.assertIn("curl is needed", result.stdout.decode())
+        output = result.stdout.decode()
+        self.assertIn("needed first: curl ca-bundle openssl-util.", output)
         self.assertIn("Installation cancelled", result.stderr.decode())
         self.assertFalse((self.root / "calls").exists())
 

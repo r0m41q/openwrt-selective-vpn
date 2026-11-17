@@ -416,29 +416,40 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ "$(id -u)" = 0 ] || die 'Run this installer as root on OpenWrt.'
-for tool in apk awk cat chmod cmp cp df du id mkdir mktemp mv nslookup readlink rm rmdir sha256sum sort stat sync wc; do
-	command -v "$tool" > /dev/null 2>&1 || die "Missing required tool: $tool"
-done
-if [ "$recover" -eq 0 ]; then
-	for tool in dnsmasq jsonfilter ls openssl ubus uci; do
-		command -v "$tool" > /dev/null 2>&1 || die "Missing required tool: $tool"
-	done
-fi
+command -v apk > /dev/null 2>&1 || die 'Missing required tool: apk'
 case "$(apk --version)" in apk-tools\ 3.*) ;; *) die 'APK 3 is required.' ;; esac
-safe_directory /etc && safe_directory "$config" && safe_directory /etc/apk &&
-	safe_directory "$init" && safe_file "$world" || die 'Unsafe system configuration paths.'
 if [ "$recover" -eq 0 ]; then
 	[ -z "$version" ] || printf '%s\n' "$version" | awk '!/^[0-9]+\.[0-9]+\.[0-9]+-r[0-9]+$/ { exit 1 }' ||
 		die 'Use an exact APK version, for example 0.1.0-r1.'
 else
 	[ -z "$version" ] && [ "$with_luci" -eq 1 ] || die '--recover takes no other options.'
 fi
-# stock OpenWrt has no curl; the installer relies on its HTTPS-only download options
-if [ "$recover" -eq 0 ] && ! command -v curl > /dev/null 2>&1; then
-	confirm 'curl is needed for checked downloads. Install curl now?' || die 'Installation cancelled.'
-	apk --no-interactive update > /dev/null && apk --no-interactive add curl ca-bundle > /dev/null ||
-		die 'Cannot install curl.'
+# stock OpenWrt lacks some tools; offer their packages before checking the rest
+needed=''
+need() {
+	command -v "$1" > /dev/null 2>&1 || needed="$needed $2"
+}
+need stat coreutils-stat
+if [ "$recover" -eq 0 ]; then
+	need curl 'curl ca-bundle'
+	need openssl openssl-util
 fi
+if [ -n "$needed" ]; then
+	confirm "These packages are needed first:$needed. Install them now?" || die 'Installation cancelled.'
+	# word splitting is wanted: the list holds plain package names
+	apk --no-interactive update > /dev/null && apk --no-interactive add $needed > /dev/null ||
+		die 'Cannot install the needed packages.'
+fi
+for tool in awk cat chmod cmp cp df du id mkdir mktemp mv nslookup readlink rm rmdir sha256sum sort stat sync wc; do
+	command -v "$tool" > /dev/null 2>&1 || die "Missing required tool: $tool"
+done
+if [ "$recover" -eq 0 ]; then
+	for tool in curl dnsmasq jsonfilter ls openssl ubus uci; do
+		command -v "$tool" > /dev/null 2>&1 || die "Missing required tool: $tool"
+	done
+fi
+safe_directory /etc && safe_directory "$config" && safe_directory /etc/apk &&
+	safe_directory "$init" && safe_file "$world" || die 'Unsafe system configuration paths.'
 
 work=$(mktemp -d "$temporary/selective-vpn-install.XXXXXXXX") || die 'Cannot create private staging.'
 trap cleanup EXIT

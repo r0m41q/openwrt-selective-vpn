@@ -36,7 +36,8 @@ jobs:
           Install on the router over SSH as root:
 
           \`\`\`sh
-          wget -qO /tmp/install.sh https://github.com/${{ github.repository }}/releases/latest/download/install.sh && sh /tmp/install.sh
+          apk update && apk add curl ca-bundle
+          curl -fsSLo /tmp/install.sh https://github.com/${{ github.repository }}/releases/latest/download/install.sh && sh /tmp/install.sh
           \`\`\`
 
           Signing key SHA256 fingerprint: $(cat KEY-FINGERPRINT)
