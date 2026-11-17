@@ -1,4 +1,4 @@
 'use strict';
 'require selective-vpn.monitor as monitor';
 
-return monitor.extend({ diagnostic: true });
+return monitor.View.extend({ diagnostic: true });

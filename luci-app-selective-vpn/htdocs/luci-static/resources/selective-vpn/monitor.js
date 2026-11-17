@@ -1,4 +1,5 @@
 'use strict';
+'require baseclass';
 'require view';
 'require selective-vpn.api as api';
 'require selective-vpn.report as report';
@@ -40,7 +41,7 @@ function table(rows) {
 	])));
 }
 
-return view.extend({
+const Monitor = view.extend({
 	handleSaveApply: null,
 	handleSave: null,
 	handleReset: null,
@@ -335,3 +336,6 @@ return view.extend({
 		this.pollTimer = this.tickTimer = null;
 	}
 });
+
+// luci requires give an instance, so pages extend the view class from here
+return baseclass.extend({ View: Monitor });

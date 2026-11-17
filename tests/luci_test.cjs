@@ -518,6 +518,7 @@ function monitorFixture(handler, options = {}) {
 	const pending = { ok: true, id: '' };
 	const settings = { enabled: '1', mode: 'managed' };
 	const view = load('selective-vpn/monitor.js', {
+		baseclass: { extend: value => value },
 		view: { extend: value => value }, report: reportLogic(), routing: routingLogic(),
 		Date: { now: () => now }, document: doc,
 		L: { hasViewPermission: () => options.writable !== false, url: (...parts) => '/' + parts.join('/') },
@@ -536,7 +537,7 @@ function monitorFixture(handler, options = {}) {
 			if (handler) return handler(...args);
 			return args[0] === 'status' ? statusReport() : args[0] === 'settings' ? settings : pending;
 		} }
-	});
+	}).View;
 	view.diagnostic = options.diagnostic === true;
 	const data = Object.prototype.hasOwnProperty.call(options, 'data') ? options.data : [statusReport(), settings, pending];
 	const root = view.render(view.diagnostic ? null : data);
@@ -548,6 +549,29 @@ function monitorFixture(handler, options = {}) {
 			assert.ok(entry, 'expected timer'); timers.delete(entry[0]); return entry[1].fn();
 		} };
 }
+
+// like luci.js: extend makes a class, and require returns an instance of it
+function luciClass() {
+	const Class = function() {};
+	Class.extend = function(properties) {
+		const Sub = function() {};
+		Sub.prototype = Object.assign(Object.create(this.prototype), properties);
+		Sub.extend = Class.extend;
+		return Sub;
+	};
+	return Class;
+}
+
+test('pages extend the monitor view from the required module instance', () => {
+	const baseclass = luciClass();
+	const Module = load('selective-vpn/monitor.js', { baseclass, view: baseclass.extend({}), report: reportLogic(), routing: routingLogic() });
+	const monitor = new Module();
+	for (const [page, diagnostic] of [['overview', false], ['diagnostics', true]]) {
+		const Page = load(`view/selective-vpn/${page}.js`, { monitor });
+		assert.equal(Page.prototype.diagnostic, diagnostic);
+		assert.equal(typeof Page.prototype.render, 'function');
+	}
+});
 
 test('doctor jobs accept report schemas and recovery calls keep their narrow arguments', async () => {
 	const f = apiFixture(method => method === 'job' ? { ok: true, state: 'complete', result: { schema: 2, report: 'doctor' } } : { ok: true, job: '1' });
