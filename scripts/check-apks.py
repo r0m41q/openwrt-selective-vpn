@@ -47,6 +47,8 @@ def mode_for(path):
         return 0o600
     if path == "etc/init.d/selective-vpn" or path == "usr/bin/selective-vpn":
         return 0o755
+    if path == "usr/lib/selective-vpn/presets":
+        return 0o644
     if path.startswith("usr/lib/selective-vpn/") and not path.endswith(
         (".sh", ".awk")
     ):

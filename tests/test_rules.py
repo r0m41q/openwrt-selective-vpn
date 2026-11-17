@@ -9,12 +9,18 @@ import test_policy as policy
 DEFAULT = "config settings 'main'\n option enabled '0'\nconfig rule 'global'\n"
 
 
-def rule(name, address="", destinations="", proto="tcp udp", ports=""):
+def rule(
+    name, address="", destinations="", proto="tcp udp", ports="", presets=""
+):
     return (
         f"config rule '{name}'\n option address '{address}'\n"
         f" option destinations '{destinations}'\n option proto '{proto}'\n"
         f" option dest_port '{ports}'\n"
+        + "".join(f" list preset '{p}'\n" for p in presets.split())
     )
+
+
+NATIVE = "xsts.auth.xboxlive.com xgpuconsole.gssv-play-prod.xboxlive.com"
 
 
 class RuleTests(unittest.TestCase):
@@ -210,6 +216,108 @@ class RuleTests(unittest.TestCase):
         self.assertIn(
             "svpn_route_phone", (self.p.f.config / "pbr").read_text()
         )
+
+    def test_presets_keep_their_own_protocol_and_port(self):
+        self.configure(
+            rule(
+                "global",
+                destinations="8.8.8.8",
+                proto="udp",
+                ports="53",
+                presets="xcloud_native xcloud_web",
+            )
+            + rule("phone", "192.168.8.12", presets="xcloud_native")
+        )
+        plan = self.plan()
+        self.assertEqual((plan / "dns").read_text(), "dnsmasq.nftset\n")
+        custom = self.p.resource(plan, "svpn_route_global")
+        self.assertIn("option proto 'udp'", custom)
+        self.assertIn("option dest_port '53'", custom)
+        self.assertIn("dest_addr '8.8.8.8'", custom)
+        native = self.p.resource(plan, "svpn_route_global__xcloud_native")
+        self.assertIn(
+            "option name 'Selective VPN: global xcloud_native'", native
+        )
+        self.assertIn("option proto 'tcp'", native)
+        self.assertIn("option dest_port '443'", native)
+        self.assertIn(f"dest_addr '{NATIVE}'", native)
+        sources = native.split("src_addr '")[1].split("'")[0].split()
+        self.assertFalse(
+            any(
+                ipaddress.ip_address("192.168.8.12") in ipaddress.ip_network(s)
+                for s in sources
+            )
+        )
+        web = self.p.resource(plan, "svpn_route_global__xcloud_web")
+        self.assertIn("xgpuweb.gssv-play-prod.xboxlive.com", web)
+        self.assertNotIn("8.8.8.8", web)
+        phone = self.p.resource(plan, "svpn_route_phone__xcloud_native")
+        self.assertIn("src_addr '192.168.8.12'", phone)
+        self.assertFalse(
+            (plan / "resources/section.pbr.svpn_route_phone").exists()
+        )
+        self.assertIn(
+            "\tlist preset 'xcloud_native'\n",
+            (plan / "rules/phone/active").read_text(),
+        )
+        self.assertNotIn(
+            "static_console_addresses_may_be_outdated",
+            (plan / "warnings").read_text(),
+        )
+
+    def test_static_preset_warns_without_needing_dns(self):
+        self.configure(
+            DEFAULT
+            + rule("phone", "192.168.8.12", presets="xcloud_native_static")
+        )
+        plan = self.plan()
+        self.assertEqual((plan / "dns").read_text(), "not_required\n")
+        self.assertIn(
+            "static_console_addresses_may_be_outdated",
+            (plan / "warnings").read_text(),
+        )
+        text = self.p.resource(plan, "svpn_route_phone__xcloud_native_static")
+        self.assertIn("dest_addr '20.201.200.49 51.12.31.0'", text)
+        self.assertIn("option dest_port '443'", text)
+
+    def test_removing_a_preset_keeps_custom_destinations(self):
+        self.configure(
+            rule(
+                "global",
+                destinations="8.8.8.8",
+                presets="xcloud_native_static",
+            )
+        )
+        first = self.plan()
+        before = self.p.resource(first, "svpn_route_global")
+        identifier = self.p.f.begin()
+        self.p.call('svpn_policy_enqueue "$@"', identifier, first)
+        self.p.f.arm_apply(identifier)
+        self.p.f.confirm(identifier)
+        self.configure(rule("global", destinations="8.8.8.8"))
+        second = self.plan()
+        self.assertEqual(
+            self.p.resource(second, "svpn_route_global__xcloud_native_static"),
+            "missing\n",
+        )
+        self.assertEqual(self.p.resource(second, "svpn_route_global"), before)
+        identifier = self.p.f.begin()
+        self.p.call('svpn_policy_enqueue "$@"', identifier, second)
+        self.p.f.arm_apply(identifier)
+        text = (self.p.f.config / "pbr").read_text()
+        self.assertNotIn("20.201.200.49", text)
+        self.assertIn("dest_addr '8.8.8.8'", text)
+
+    def test_unknown_presets_and_ambiguous_names_are_rejected(self):
+        for preset in (
+            "xbox_native",
+            "XCLOUD_NATIVE",
+            "xcloud__native",
+            "xcloud-native",
+            "_xcloud",
+        ):
+            self.reject(rule("global", presets=preset))
+        self.reject(DEFAULT + rule("my__phone", "192.168.8.12"))
 
     def test_reserved_route_section_requires_journal_ownership(self):
         extra = "config policy 'svpn_route_global'\n"

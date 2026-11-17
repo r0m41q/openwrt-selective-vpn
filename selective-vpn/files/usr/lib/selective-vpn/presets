@@ -1,0 +1,21 @@
+# optional destination sets that a rule can include by id
+
+preset xcloud_native
+	label xCloud native
+	proto tcp
+	dest_port 443
+	destinations xsts.auth.xboxlive.com xgpuconsole.gssv-play-prod.xboxlive.com
+
+preset xcloud_web
+	label xCloud web
+	proto tcp
+	dest_port 443
+	destinations xgpuweb.gssv-play-prod.xboxlive.com xgpuwebf2p.gssv-play-prod.xboxlive.com
+
+# addresses seen for the two native domains on one setup, they may change
+preset xcloud_native_static
+	label xCloud native static IPs (experimental)
+	proto tcp
+	dest_port 443
+	destinations 20.201.200.49 51.12.31.0
+	warning static_console_addresses_may_be_outdated

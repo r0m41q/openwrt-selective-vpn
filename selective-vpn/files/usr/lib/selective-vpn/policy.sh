@@ -144,12 +144,11 @@ svpn_policy_prepare() (
 		console_dest=''
 		browser_dest=''
 		if [ "$console" = 1 ]; then
-			if [ "$fallback" = 1 ]; then
-				console_dest='20.201.200.49 51.12.31.0'
-				printf '%s\n' 'static_console_addresses_may_be_outdated' >> "$work/warnings"
-			else console_dest='xsts.auth.xboxlive.com xgpuconsole.gssv-play-prod.xboxlive.com'; fi
+			preset=xcloud_native
+			[ "$fallback" = 0 ] || preset=xcloud_native_static
+			console_dest=$(svpn_rules_preset "$work" "$preset") || exit 1
 		fi
-		if [ "$browser" = 1 ]; then browser_dest='xgpuweb.gssv-play-prod.xboxlive.com xgpuwebf2p.gssv-play-prod.xboxlive.com'; fi
+		if [ "$browser" = 1 ]; then browser_dest=$(svpn_rules_preset "$work" xcloud_web) || exit 1; fi
 		printf '%s\n' "$console_dest $browser_dest" | tr ' ' '\n' > "$work/defaults"
 		: > "$work/custom"
 		for value in $custom; do

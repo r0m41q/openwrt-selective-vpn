@@ -49,6 +49,7 @@ define Package/selective-vpn/install
 	$(INSTALL_CONF) ./files/etc/config/selective-vpn $(1)/etc/config/selective-vpn
 	$(INSTALL_DATA) ./files/usr/lib/selective-vpn/*.sh $(1)/usr/lib/selective-vpn/
 	$(INSTALL_DATA) ./files/usr/lib/selective-vpn/*.awk $(1)/usr/lib/selective-vpn/
+	$(INSTALL_DATA) ./files/usr/lib/selective-vpn/presets $(1)/usr/lib/selective-vpn/
 	$(INSTALL_BIN) ./files/usr/lib/selective-vpn/recovery-watch $(1)/usr/lib/selective-vpn/
 	$(INSTALL_BIN) ./files/usr/lib/selective-vpn/control $(1)/usr/lib/selective-vpn/
 	$(INSTALL_BIN) ./files/usr/lib/selective-vpn/rpc-bridge $(1)/usr/lib/selective-vpn/
