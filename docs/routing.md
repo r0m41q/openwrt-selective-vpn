@@ -14,6 +14,16 @@ Each rule can have:
 
 Enter the IPv4 address of the device you are using, acknowledge the limits, and click **Preview changes**. This saves the rules as a draft and shows the exact routes per rule: which devices, which destinations and which traffic. Nothing changes on the network until you apply. Confirm router access within two minutes after applying, or the change rolls back.
 
+## Importing hand-made PBR policies
+
+If you already send traffic through the VPN with your own PBR policies, they are listed under **Other PBR policies**, with whether each one can become a rule. A policy can be imported when it is enabled, uses the selected VPN's network interface (for a copied client, the old client's interface), and matches either everyone or one device IPv4 address, with domains, IPv4 addresses or subnets as destinations and TCP, UDP or all protocols. All protocols become TCP and UDP. Anything else, such as MAC or subnet sources, source ports or DNS policies, stays as it is.
+
+**Import policies** adds them to the draft rules: a policy for everyone goes into Global, a policy for one device into that device's rule, which is created when missing. Destinations that match a preset become that preset. Policies for one device that use different protocols or ports than its rule are left out. Devices with their own rule do not get the routes imported into Global, and the page says which ones.
+
+Policies without a section name are given one, based on their name, so they can be tracked. PBR ignores section names, so this changes nothing on the network.
+
+Nothing changes on the network until you apply. Applying removes the imported policies from PBR. Removing the rule that replaced one, disabling routing or uninstalling puts it back, unless you created another policy with the same section name. Restored policies are added after your other PBR policies.
+
 ## Limits
 
 - Only IPv4 is routed. IPv6 connections to the same services leave through your normal connection.

@@ -100,7 +100,7 @@ svpn_life_pbr_owned() (
 		[ -e "$record" ] || continue
 		svpn_tx_check_record "$record" || exit 1
 		kind=$(svpn_state_read "$record/kind") && target=$(svpn_state_read "$record/target") || exit 1
-		case "$kind:$target" in section:pbr.*) printf '%s\n' "${target#pbr.}" >> "$1/pbr.owned" ;; esac
+		case "$kind:$target" in section:pbr.svpn_*) printf '%s\n' "${target#pbr.}" >> "$1/pbr.owned" ;; esac
 	done
 )
 
@@ -115,12 +115,19 @@ svpn_life_obsolete() (
 		svpn_tx_check_record "$record" || exit 1
 		kind=$(svpn_state_read "$record/kind") && target=$(svpn_state_read "$record/target") || exit 1
 		[ ! -e "$work/wanted/$kind.$target" ] || continue
+		adopted=0
+		case "$kind:$target" in
+			section:pbr.svpn_*) ;;
+			section:pbr.*|option:openvpn.*) adopted=1 ;;
+		esac
 		svpn_resource_read "$kind" "$target" "$work/current" "$work" || exit 1
-		cmp -s "$record/applied" "$work/current" || {
-			svpn_state_error 'A managed resource has a later edit. Resolve it before continuing.'; exit 1;
-		}
+		if ! cmp -s "$record/applied" "$work/current"; then
+			# a replaced policy or client the user changed since stays as it is
+			[ "$adopted" = 0 ] || continue
+			svpn_state_error 'A managed resource has a later edit. Resolve it before continuing.'; exit 1
+		fi
 		case "$mode:$kind:$target" in
-			apply:section:selective-vpn.svpn_rule_*) ;;
+			apply:section:selective-vpn.svpn_rule_*|apply:option:openvpn.*) ;;
 			apply:option:*|apply:section:selective-vpn.*) continue ;;
 			*:option:pbr.config.supported_interface)
 				logical=$(svpn_state_read "$tx/lifecycle/after.interface") || exit 1
@@ -183,7 +190,7 @@ svpn_life_metadata() (
 	}
 	svpn_life_active "$work" || exit 1
 	for direction in before after; do
-		for key in mode selection interface device client; do
+		for key in mode selection interface device client adopted adopted_device; do
 			value=''
 			if [ "$direction" = before ]; then
 				if [ -e "$SVPN_PRIVATE_DIR/confirmed" ]; then
@@ -202,8 +209,10 @@ svpn_life_metadata() (
 	# include every non-tunnel local subnet when checking connected routes
 	svpn_discover_live "$work" > "$meta/live.before" || exit 1
 	before_tun=$(svpn_state_read "$meta/before.device") && after_tun=$(svpn_state_read "$meta/after.device") || exit 1
-	awk -F '\t' -v old="$before_tun" -v new="$after_tun" '
-		$1=="I" { excluded[$2]=($4==old || $4==new) }
+	# a replaced client's tunnel often uses the same subnet as the new one
+	replaced="$(svpn_state_read "$meta/before.adopted_device") $(svpn_state_read "$meta/after.adopted_device")" || exit 1
+	awk -F '\t' -v old="$before_tun" -v new="$after_tun" -v replaced=" $replaced " '
+		$1=="I" { excluded[$2]=($4==old || $4==new || ($4 != "" && index(replaced, " " $4 " "))) }
 		$1=="A" && !excluded[$2] { print $3 "/" $4 }' "$meta/live.before" > "$meta/eligible" || exit 1
 	if [ -e "$work/network/lan_subnets" ]; then cp "$work/network/lan_subnets" "$meta/lan_subnets" || exit 1
 	else : > "$meta/lan_subnets"; fi
@@ -237,9 +246,16 @@ svpn_life_services() (
 	tun=$(svpn_state_read "$meta/$direction.device") || exit 1
 	client=$(svpn_state_read "$meta/$direction.client") || exit 1
 	case "$mode" in ''|managed|external) ;; *) exit 1 ;; esac
+	other=before; [ "$direction" != before ] || other=after
 	if [ "$mode" != managed ]; then
-		other=before; [ "$direction" != before ] || other=after
 		if [ "$(svpn_state_read "$meta/$other.mode")" = managed ]; then svpn_service openvpn stop svpn_client || exit 1; fi
+	fi
+	adopted='' returned=''
+	[ ! -e "$meta/$direction.adopted" ] || adopted=$(svpn_state_read "$meta/$direction.adopted") || exit 1
+	[ ! -e "$meta/$other.adopted" ] || returned=$(svpn_state_read "$meta/$other.adopted") || exit 1
+	if [ -n "$adopted" ]; then svpn_service openvpn stop "$adopted" || exit 1; fi
+	if [ -n "$returned" ] && [ "$returned" != "$adopted" ] && svpn_client_enabled "$meta" "$returned"; then
+		svpn_service openvpn start "$returned" || exit 1
 	fi
 	if svpn_life_changed "$id" network; then ubus -t 5 call network reload '{}' >/dev/null 2>&1 || exit 1; fi
 	if svpn_life_changed "$id" firewall; then
@@ -280,6 +296,15 @@ svpn_life_services() (
 	fi
 	[ -n "$tun" ] || tun=svpn_absent
 	svpn_runtime_check "$meta" "$tun" "$meta/eligible"
+)
+
+svpn_client_enabled() (
+	[ "$#" -eq 2 ] && svpn_private_directory "$1" || exit 1
+	for key in enabled enable; do
+		svpn_resource_read option "openvpn.$2.$key" "$1/client.enabled" "$1" || exit 1
+		grep -qx "[[:space:]]*option $key '1'" "$1/client.enabled" && exit 0
+	done
+	exit 1
 )
 
 svpn_lifecycle_restore() (
@@ -376,7 +401,7 @@ svpn_life_apply() (
 	fi
 	# private copies retain only metadata needed for the lifecycle
 	mkdir -m 700 "$work/network" "$work/policy" || exit 1
-	for name in interface device client vpn_mode lan_subnets; do cp "$network/$name" "$work/network/$name" || exit 1; done
+	for name in interface device client vpn_mode lan_subnets adopted adopted_device; do cp "$network/$name" "$work/network/$name" || exit 1; done
 	svpn_state_mark "$work/network/mode" "$mode" && svpn_state_mark "$work/network/selection" "$selection" || exit 1
 	cp "$policy/dns" "$work/policy/dns" && cp "$policy/pbr.table" "$work/pbr.table" || exit 1
 	if [ "$(svpn_state_read "$policy/dns")" = dnsmasq.nftset ]; then
@@ -400,6 +425,15 @@ svpn_life_apply() (
 		printf "\toption networks '%s'\n\toption ipv6_acknowledged '1'\n" "$(printf '%s' "$networks" | tr '\n' ' ')"
 	} | svpn_life_want "$work" section selective-vpn.svpn_active present || exit 1
 	printf "\toption enabled '1'\n" | svpn_life_want "$work" option selective-vpn.main.enabled present || exit 1
+	adopted=$(svpn_state_read "$network/adopted") || exit 1
+	if [ -n "$adopted" ]; then
+		# the copied client stays configured but no longer starts
+		printf "\toption enabled '0'\n" | svpn_life_want "$work" option "openvpn.$adopted.enabled" present || exit 1
+		enable=$(svpn_table_get "$network/openvpn.table" "$adopted" enable) || exit 1
+		if [ -n "$enable" ]; then
+			printf "\toption enable '0'\n" | svpn_life_want "$work" option "openvpn.$adopted.enable" present || exit 1
+		fi
+	fi
 	svpn_life_supported "$work" "$(svpn_state_read "$network/interface")" || exit 1
 	svpn_life_obsolete "$work" apply || exit 1
 	# unchanged events must not write another journal to flash
@@ -472,6 +506,9 @@ svpn_life_remove() (
 		if [ -d "$tx/lifecycle" ]; then
 			mkdir -m 700 "$work/network" || exit 1
 			for key in mode selection interface device client; do cp "$tx/lifecycle/after.$key" "$work/network/$key" || exit 1; done
+			for key in adopted adopted_device; do
+				[ ! -e "$tx/lifecycle/after.$key" ] || cp "$tx/lifecycle/after.$key" "$work/network/$key" || exit 1
+			done
 			cp "$tx/lifecycle/lan_subnets" "$work/network/lan_subnets" || exit 1
 			mkdir -m 700 "$work/policy" || exit 1
 			cp "$tx/lifecycle/dns" "$work/policy/dns" || exit 1

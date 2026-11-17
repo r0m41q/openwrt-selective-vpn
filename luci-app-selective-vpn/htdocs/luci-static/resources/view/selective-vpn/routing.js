@@ -20,6 +20,24 @@ const warnings = {
 	encrypted_dns_and_cached_answers_may_bypass_sets: _('Encrypted DNS and cached answers may bypass domain matching.')
 };
 
+const outcomes = {
+	ok: _('Can be imported into rule'),
+	imported: _('Imported into rule'),
+	adopted: _('Already replaced by rule'),
+	dns_policy: _('DNS policy, left as it is'),
+	disabled: _('Disabled, left as it is'),
+	interface: _('Uses another interface than the selected VPN'),
+	chain: _('Uses a chain other than prerouting'),
+	source_port: _('Matches source ports'),
+	sources: _('Matches something other than one device IPv4 address'),
+	destinations: _('Needs destinations that are domains, IPv4 addresses or aligned subnets'),
+	protocol: _('Matches a protocol other than TCP or UDP'),
+	ports: _('Has a port list that rules do not support'),
+	conflict: _('Uses other protocols or ports than rule'),
+	too_many_destinations: _('Would give too many destinations to rule'),
+	rules_limit: _('No room for another device rule')
+};
+
 function traffic(route) {
 	const proto = route.proto.map(value => value.toUpperCase()).join(', ');
 	return route.ports.length ? proto + ' ' + _('ports') + ' ' + route.ports.join(', ') : proto + ', ' + _('all ports');
@@ -30,8 +48,11 @@ return view.extend({
 	handleSave: null,
 	handleReset: null,
 
-	load: function() {
-		return Promise.all(['settings', 'leases', 'pending', 'rules'].map(name => api.call(name).catch(() => null)));
+	load: async function() {
+		const data = await Promise.all(['settings', 'leases', 'pending', 'rules'].map(name => api.call(name).catch(() => null)));
+		const vpn = api.selection() || (data[0] ? { mode: data[0].mode, selection: data[0].selection } : null);
+		data.push(vpn && vpn.selection ? await api.call('pbr_policies', vpn.mode, vpn.selection).catch(() => null) : null);
+		return data;
 	},
 
 	message: function(text) {
@@ -46,6 +67,7 @@ return view.extend({
 	updateControls: function() {
 		const locked = this.busy || this.readonly || !this.loaded || !!this.pending.id;
 		this.inputs.concat(this.rowInputs).forEach(node => { node.disabled = locked; });
+		this.importButton.disabled = locked || !this.policies.some(policy => policy.status === 'ok');
 		this.previewButton.disabled = locked;
 		this.applyButton.disabled = locked || !this.review;
 		this.confirmButton.disabled = this.busy || this.readonly || this.pending.state !== 'awaiting_confirmation' || this.remaining() <= 0;
@@ -124,6 +146,9 @@ return view.extend({
 						_('This device uses only the routes below instead of Global. With no presets or destinations it stays on its normal connection.')));
 				head.push(remove);
 			}
+			if (row.adopt && row.adopt.length)
+				head.push(E('p', {}, [_('Replaces hand-made PBR policies: ') + row.adopt.join(', ') +
+					_('. Removing this rule brings them back.')]));
 			return E('div', { 'class': 'cbi-section' }, head.concat([
 				field(_('Presets'), E('div', { id: id + 'presets' }, presetBoxes), _('Each preset keeps its own protocol and port.')),
 				field(_('Custom destinations'), destinations, _('Domains, IPv4 addresses or IPv4 subnets, separated by spaces or new lines.')),
@@ -154,6 +179,41 @@ return view.extend({
 		this.message(_('Device added with a copy of the Global routes. Clear them to keep this device on its normal connection.'));
 	},
 
+	// list hand-made policies, with the rule each one went into after an import
+	showPolicies: function(skipped) {
+		const rows = this.policies.map(policy => {
+			let text = outcomes[policy.status] || _('Not supported');
+			if (['ok', 'imported', 'adopted', 'conflict', 'too_many_destinations'].includes(policy.status))
+				text += ' ' + (policy.rule === 'global' ? _('Global') : policy.rule);
+			return E('tr', { 'class': 'tr' }, [E('td', { 'class': 'td' }, [policy.label || policy.section || _('Unnamed')]),
+				E('td', { 'class': 'td' }, [text])]);
+		});
+		this.policyArea.replaceChildren(rows.length ? E('table', { 'class': 'table' }, [E('tr', { 'class': 'tr table-titles' },
+			[_('Policy'), _('Result')].map(text => E('th', { 'class': 'th' }, [text])))].concat(rows)) :
+			E('p', {}, [_('No other PBR policies were found.')]),
+			...(skipped || []).map(rule => E('p', { 'class': 'alert-message warning' }, [_('Rule ') + rule +
+				_(' has its own routes, so this device does not get the imported Global routes. Add them to the rule if it needs them.')])));
+	},
+
+	importPolicies: async function() {
+		if (this.pending.id)
+			throw new Error(_('Finish the pending change before importing policies.'));
+		if (!this.vpn || !this.vpn.selection)
+			throw new Error(_('Choose a VPN on the VPN page first.'));
+		const text = routing.serialize(this.rows, this.presets);
+		this.message(_('Importing PBR policies…'));
+		const result = await api.call('import_pbr', this.vpn.mode, this.vpn.selection, text);
+		this.rows = routing.rows(result.rules, this.presets);
+		const report = routing.policies(result.policies);
+		this.policies = report.filter(policy => policy.status !== 'global_skips');
+		this.renderRows();
+		this.invalidate();
+		this.showPolicies(report.filter(policy => policy.status === 'global_skips').map(policy => policy.rule));
+		const count = this.policies.filter(policy => policy.status === 'imported').length;
+		this.message(count ? _('Policies added to the rules below. Preview and apply to replace them; until then they keep working as before.') :
+			_('No policies could be imported.'));
+	},
+
 	preview: async function() {
 		if (this.pending.id)
 			throw new Error(_('Finish the pending change before preparing another.'));
@@ -179,6 +239,10 @@ return view.extend({
 				row.map(text => E('td', { 'class': 'td' }, [text])))))),
 			E('p', {}, [_('LAN networks: '), result.networks.join(', '), ' (', result.subnets.join(', '), ')']),
 			E('p', {}, [_('DNS matching: '), result.dns === 'dnsmasq.nftset' ? _('Router dnsmasq nftsets') : _('IP addresses only')]),
+			...result.adopted.map(item => E('p', {}, [_('Removes hand-made PBR policy ') + (item.label || item.section) +
+				' (' + item.section + ') ' + _('in favour of rule ') + (item.rule === 'global' ? _('Global') : item.rule)])),
+			result.client ? E('p', {}, [_('Disables the OpenVPN client ') + result.client +
+				_('. Disable or uninstall turns it back on.')]) : '',
 			E('p', {}, [args[0] === 'managed' ? _('The selected managed VPN will start. LAN forwarding and managed policies will be updated.') :
 				_('The existing VPN must already be running. LAN forwarding and managed policies will be updated.')]),
 			E('ul', {}, result.warnings.filter(name => Object.prototype.hasOwnProperty.call(warnings, name)).map(name => E('li', {}, [warnings[name]])))
@@ -293,6 +357,11 @@ return view.extend({
 			}
 		});
 		this.addButton = button(_('Add device'), async () => this.addDevice());
+		this.importButton = button(_('Import policies'), () => this.importPolicies());
+		this.policyArea = E('div');
+		// a dry run reports where each policy would go
+		this.policies = routing.policies(data[4] && data[4].policies).filter(policy => policy.status !== 'global_skips')
+			.map(policy => policy.status === 'imported' ? Object.assign(policy, { status: 'ok' }) : policy);
 		this.ruleArea = E('div');
 		this.previewArea = E('div');
 		this.previewButton = button(_('Preview changes'), () => this.preview());
@@ -310,6 +379,7 @@ return view.extend({
 		this.inputs = [this.networks, this.peer, this.ack, this.manual, this.suggestions, this.addButton];
 		[this.networks, this.peer, this.ack].forEach(node => ['input', 'change'].forEach(event => node.addEventListener(event, () => this.invalidate())));
 		this.renderRows();
+		this.showPolicies();
 		window.addEventListener('pagehide', () => {
 			this.active = false;
 			window.clearTimeout(this.timer);
@@ -333,6 +403,11 @@ return view.extend({
 					_('DHCP suggestions are unavailable. Enter an address instead.')),
 				field(_('Or IPv4 address'), this.manual),
 				this.addButton
+			]),
+			E('div', { 'class': 'cbi-section' }, [
+				E('h3', {}, [_('Other PBR policies')]),
+				E('p', {}, [_('Policies made in PBR by hand that send traffic through the selected VPN can become rules here. Applying removes them from PBR; disable, uninstall or removing the rule puts them back.')]),
+				this.policyArea, this.importButton
 			]),
 			E('details', {}, [E('summary', {}, [_('Advanced')]),
 				field(_('LAN networks'), this.networks, _('Leave blank for eligible networks in the LAN firewall zone. Enter interface names to select other local static networks.'))

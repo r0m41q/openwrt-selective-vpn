@@ -741,3 +741,63 @@ test('the monitor reads lock-sharing RPCs in order', async () => {
 	release(statusReport()); await loading;
 	assert.deepEqual(f.calls, [['status'], ['settings'], ['pending']]);
 });
+
+test('rules keep the PBR policies they replace and previews list them', () => {
+	const logic = routingLogic();
+	const presets = logic.catalog(presetText);
+	const rows = logic.rows('rule global\ndestinations example.com\nadopt gaming everyone\n', presets);
+	assert.deepEqual(Array.from(rows[0].adopt), ['gaming', 'everyone']);
+	assert.equal(logic.serialize(rows, presets), 'rule global\nproto tcp udp\ndestinations example.com\nadopt gaming everyone\n');
+	assert.throws(() => logic.rows('rule global\nadopt svpn_route_global\n', presets), /could not be read/);
+	const args = logic.options(routingForm(), vpnSelection, rows, presets);
+	const result = logic.preview(reviewResult({ adopted: 'global\tgaming\tGaming PC\n', adopted_client: 'personal' }), args);
+	assert.deepEqual({ ...result.adopted[0] }, { rule: 'global', section: 'gaming', label: 'Gaming PC' });
+	assert.equal(result.client, 'personal');
+	for (const adopted of ['tv\tgaming\tx', 'global\tsvpn_route_global\tx', 'global\tgaming'])
+		assert.throws(() => logic.preview(reviewResult({ adopted }), args));
+	assert.equal(logic.preview(reviewResult({ adopted_client: '$(id)' }), args).client, '');
+	const report = logic.policies('1\tgaming\tGaming PC\timported\tglobal\n2\t-\tPhone\tsources\t\n3\t$(id)\tx\tok\t\n');
+	assert.deepEqual(Array.from(report, item => item.status), ['imported', 'sources']);
+});
+
+test('importing PBR policies sends the edited rows and reloads them', async () => {
+	const policies = '1\tgaming\tGaming PC\timported\tdevice_192_168_8_20\n2\tphone\tPhone\tsources\t\n';
+	const f = routingFixture(method => method === 'import_pbr' ? { ok: true,
+		rules: 'rule global\npreset xcloud_native\nrule device_192_168_8_20\naddress 192.168.8.20\nadopt gaming\n',
+		policies: policies + '\t\t\tglobal_skips\ttv\n' } : reviewResult(), true, routingData([{ policies }]));
+	assert.equal(f.view.importButton.disabled, false);
+	assert.match(texts(f.view.policyArea).join('|'), /Gaming PC\|Can be imported into rule device_192_168_8_20/);
+	f.view.rows[0].destinations = 'example.net';
+	await f.view.run(() => f.view.importPolicies());
+	const sent = f.calls.find(call => call[0] === 'import_pbr');
+	assert.deepEqual(sent.slice(1, 3), ['managed', 'profile.abcdefgh']);
+	assert.match(sent[3], /destinations example\.net/);
+	assert.deepEqual(Array.from(f.view.rows[1].adopt), ['gaming']);
+	assert.match(texts(f.view.ruleArea).join('|'), /Replaces hand-made PBR policies: gaming/);
+	assert.match(texts(f.view.policyArea).join('|'), /Imported into rule device_192_168_8_20.*Rule tv/);
+	assert.ok(!f.calls.some(call => ['preview', 'apply'].includes(call[0])));
+	const empty = routingFixture(() => reviewResult(), true, routingData([{ policies: '2\tphone\tPhone\tsources\t\n' }]));
+	assert.equal(empty.view.importButton.disabled, true);
+});
+
+test('an existing client lists every problem and can be copied into a profile', async () => {
+	const f = viewFixture(method => method === 'client_check' ? { ok: true, problems: 'device\t\nroutes\t\nunsupported\tProfile line 3: Unsupported profile option.\nbogus\t\n' } :
+		method === 'adopt_client' ? { ok: true, id: 'profile.ABC12345' } : summary(1));
+	f.view.render({ ...baseData, settings: { enabled: '0', mode: 'external', selection: 'personal' } });
+	await settle();
+	f.view.mode.value = 'external';
+	f.view.clients.value = 'personal';
+	await f.view.run(() => f.view.select());
+	assert.deepEqual(f.calls.find(call => call[0] === 'client_check'), ['client_check', 'personal']);
+	const text = texts(f.view.checks).join('|');
+	assert.match(text, /fixed tunnel name/);
+	assert.match(text, /redirect-gateway/);
+	assert.match(text, /Unsupported setting: Profile line 3/);
+	assert.equal(texts(f.view.checks).filter(item => /bogus/.test(item)).length, 0);
+	await f.view.run(() => f.view.copyClient());
+	assert.deepEqual(f.calls.find(call => call[0] === 'adopt_client'), ['adopt_client', 'personal']);
+	assert.equal(f.view.mode.value, 'managed');
+	assert.equal(f.view.profiles.value, 'profile.ABC12345');
+	assert.match(f.view.feedback.textContent, /old client keeps running until you apply/);
+	assert.ok(!f.calls.some(call => ['apply', 'enable'].includes(call[0])));
+});

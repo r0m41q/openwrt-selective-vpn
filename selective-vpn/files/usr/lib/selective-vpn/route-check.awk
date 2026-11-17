@@ -31,6 +31,7 @@ FILENAME == eligible {
 		if ($i == "expires") { i++; continue }
 		normalized = normalized (normalized == "" ? "" : " ") $i
 	}
+	if (dev != "" && index(skip, " " dev " ")) next
 	if (dev == tun || (old_tun != "" && dev == old_tun)) {
 		if (family == 6 || via || proto != "kernel" || $1 == "default") { bad = 1; next }
 		cidr = $1

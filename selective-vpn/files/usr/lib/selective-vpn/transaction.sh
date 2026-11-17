@@ -121,7 +121,10 @@ svpn_tx_add() (
 		}
 		svpn_state_mark "$tx/incomplete" 1 || exit 1
 	else
-		if [ "$kind" = section ] && [ "$(head -n 1 "$stage/original")" != missing ]; then
+		if [ "$kind" = section ] && ! svpn_reserved_identifier "${target#*.}"; then
+			# a hand-made policy can only be taken over by removing it
+			[ "$presence" = missing ] && [ "$(sed -n 2p "$stage/original")" = "config policy '${target#*.}'" ] || exit 1
+		elif [ "$kind" = section ] && [ "$(head -n 1 "$stage/original")" != missing ]; then
 			svpn_state_error 'The reserved section already exists and is not owned by this application.'; exit 1
 		fi
 		owned_count=0

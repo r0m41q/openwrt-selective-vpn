@@ -7,7 +7,7 @@ const bridge = '/usr/lib/selective-vpn/rpc-bridge';
 const limits = {
 	mode: 8, selection: 64, networks: 4096, rules: 32768,
 	ack: 1, peer: 15, profile: 32768, username: 127,
-	password: 127, id: 64, review: 64
+	password: 127, id: 64, review: 64, client: 64
 };
 
 function invoke(operation, args) {
@@ -126,7 +126,11 @@ return {
 		leases: method('leases', {}),
 		profile_summary: method('profile_summary', { id: '' }),
 		pending: method('pending', {}),
+		client_check: method('client_check', { client: '' }),
+		pbr_policies: method('pbr_policies', { mode: '', selection: '' }),
 		import_profile: method('import_profile', { profile: '' }),
+		adopt_client: method('adopt_client', { client: '' }),
+		import_pbr: method('import_pbr', { mode: '', selection: '', rules: '' }),
 		set_credentials: method('set_credentials', { id: '', username: '', password: '' }),
 		preview: method('preview', { mode: '', selection: '', networks: '', rules: '', ack: '', peer: '' }),
 		apply: method('apply', { mode: '', selection: '', networks: '', ack: '', peer: '', review: '' }),

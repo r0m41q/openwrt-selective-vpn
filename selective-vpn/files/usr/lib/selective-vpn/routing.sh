@@ -111,6 +111,12 @@ svpn_routing_preview() (
 	done
 	value=$(svpn_routing_routes "$policy/rules") || exit 1
 	json_add_string routes "$value"
+	# hand-made policies and the client this change takes over
+	value=$(awk -F '\t' 'FILENAME ~ /pbr\.table$/ { if ($1 == "S") section[$4] = $2; else if ($3 == "name") label[$2] = $4; next }
+		{ print $2 "\t" $1 "\t" (($1 in section) ? substr(label[section[$1]], 1, 64) : "") }' "$policy/pbr.table" "$policy/adopt") || exit 1
+	json_add_string adopted "$value"
+	value=$(svpn_state_read "$network/adopted") || exit 1
+	json_add_string adopted_client "$value"
 	value=$(svpn_routing_digest "$network" "$policy") || exit 1
 	json_add_string review "$value"
 	value=$(while IFS= read -r warning; do

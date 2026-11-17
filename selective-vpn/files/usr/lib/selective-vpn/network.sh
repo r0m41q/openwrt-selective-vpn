@@ -56,6 +56,7 @@ svpn_network_prepare() (
 		svpn_state_error 'Network discovery failed. Check saved and pending configuration.'; exit 1;
 	}
 	svpn_network_owned "$work" || exit 1
+	adopted='' adopted_path='' adopted_device=''
 	if [ "$mode" = managed ]; then
 		svpn_resource_target file "$selection/client.ovpn" || exit 1
 		profile=$SVPN_PROFILE_DIR/$selection/client.ovpn
@@ -63,6 +64,17 @@ svpn_network_prepare() (
 		client=svpn_client
 		tun=$(svpn_vpn_file_device "$profile") || exit 1
 		case "$tun" in tun_sv*) ;; *) exit 1 ;; esac
+		# a copied client is disabled when this profile starts
+		adopted=$(svpn_adopted_client "$selection") || exit 1
+		if [ -n "$adopted" ] && awk -F '\t' -v name="$adopted" '$1 == "S" && $3 == "openvpn" && $4 == name { found++ }
+			END { exit (found != 1) }' "$work/openvpn.table"; then
+			adopted_path=$(svpn_table_get "$work/openvpn.table" "$adopted" config) &&
+				adopted_device=$(svpn_table_get "$work/openvpn.table" "$adopted" dev) || exit 1
+			[ -n "$adopted_device" ] || [ -z "$adopted_path" ] || adopted_device=$(svpn_vpn_file_device "$adopted_path" 2>/dev/null) || :
+			[ -z "$adopted_device" ] || svpn_valid_netdev "$adopted_device" || adopted_device=''
+		else
+			adopted=''
+		fi
 	else
 		svpn_valid_identifier "$selection" && ! svpn_reserved_identifier "$selection" || exit 1
 		client=$selection
@@ -122,7 +134,7 @@ svpn_network_prepare() (
 	awk -F '\t' '$1 == "S" && $3 == "openvpn" { print $4 }' "$work/openvpn.table" > "$work/clients"
 	while IFS= read -r other; do
 		svpn_valid_identifier "$other" || { svpn_state_error 'Existing VPN clients need explicit names.'; exit 1; }
-		[ "$other" != "$client" ] || continue
+		[ "$other" != "$client" ] && [ "$other" != "$adopted" ] || continue
 		other_dev=$(svpn_table_get "$work/openvpn.table" "$other" dev) || exit 1
 		other_path=$(svpn_table_get "$work/openvpn.table" "$other" config) || exit 1
 		if [ -z "$other_dev" ]; then
@@ -135,7 +147,7 @@ svpn_network_prepare() (
 	done < "$work/clients"
 	for path in "$SVPN_OPENVPN_DIR/"*.conf; do
 		[ -e "$path" ] || [ -L "$path" ] || continue
-		[ "$path" != "$profile" ] || continue
+		[ "$path" != "$profile" ] && [ "$path" != "$adopted_path" ] || continue
 		other_dev=$(svpn_vpn_file_device "$path") || {
 			svpn_state_error 'A standalone OpenVPN profile has no supported stable device.'; exit 1;
 		}
@@ -172,6 +184,7 @@ svpn_network_prepare() (
 	done
 	cmp -s "$profile" "$work/profile.source" || exit 1
 	svpn_state_mark "$work/profile_path" "$profile" || exit 1
+	svpn_state_mark "$work/adopted" "$adopted" && svpn_state_mark "$work/adopted_device" "$adopted_device" || exit 1
 	svpn_state_budget "$runtime" || exit 1
 	printf '%s\n' "$work"
 	trap - EXIT

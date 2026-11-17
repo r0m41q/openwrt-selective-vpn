@@ -4,6 +4,9 @@ set -eu
 . /usr/lib/selective-vpn/common.sh
 case "$*" in
 	'openvpn start svpn_client'|'openvpn stop svpn_client'|'pbr reload'|'pbr stop'|'pbr running'|'pbr version'|'firewall reload') ;;
+	'openvpn start '*|'openvpn stop '*)
+		[ "$#" -eq 3 ] || exit 1
+		case "$3" in ''|[!a-zA-Z_]*|*[!a-zA-Z0-9_]*|svpn_*) exit 1 ;; esac ;;
 	*) exit 1 ;;
 esac
 

@@ -24,6 +24,8 @@ svpn_policy_owned() (
 		svpn_tx_check_record "$record" || exit 1
 		kind=$(svpn_state_read "$record/kind") && target=$(svpn_state_read "$record/target") || exit 1
 		case "$kind:$target" in section:pbr.*|option:pbr.*) ;; *) continue ;; esac
+		# replaced hand-made policies stay the user's, rules list them separately
+		if [ "$kind" = section ] && ! svpn_reserved_identifier "${target#pbr.}"; then continue; fi
 		[ "$kind" != section ] || printf '%s\n' "${target#pbr.}" >> "$1/pbr.owned"
 		svpn_resource_read "$kind" "$target" "$1/current" "$1" || exit 1
 		cmp -s "$record/applied" "$1/current" || {
@@ -132,6 +134,8 @@ svpn_policy_prepare() (
 		END { exit (found != 1) }' "$work/pbr.table" || { svpn_state_error 'PBR needs its named config section.'; exit 1; }
 	svpn_policy_owned "$work" || exit 1
 	svpn_rules_prepare "$work" "$network" && svpn_rules_policies "$work" "$interface" || exit 1
+	# policies a rule replaces are removed, so they cannot overlap
+	cut -f 1 "$work/adopt" >> "$work/pbr.owned" || exit 1
 	all_dest=$(cat "$work/destinations") || exit 1
 	domains=0
 	for value in $all_dest; do

@@ -41,6 +41,11 @@ function ruleName(value) {
 		!/__/.test(value) && !/^svpn_/.test(value) && value !== 'main';
 }
 
+// a hand-made PBR section that a rule replaces
+function sectionName(value) {
+	return /^[a-zA-Z_][a-zA-Z0-9_]{0,62}$/.test(value) && !/^svpn_/.test(value);
+}
+
 function presetId(value) {
 	return /^[a-z][a-z0-9_]{0,62}$/.test(value) && !/__/.test(value);
 }
@@ -77,7 +82,7 @@ function rows(text, presets) {
 		if (key === 'rule') {
 			if (words.length !== 1 || !ruleName(words[0]))
 				throw new Error(error);
-			row = { name: words[0], address: '', presets: [], destinations: '', tcp: true, udp: true, ports: '' };
+			row = { name: words[0], address: '', presets: [], destinations: '', tcp: true, udp: true, ports: '', adopt: [] };
 			result.push(row);
 		}
 		else if (!row)
@@ -94,11 +99,13 @@ function rows(text, presets) {
 			row.destinations = words.join('\n');
 		else if (key === 'preset')
 			row.presets = words.filter(id => presets.some(preset => preset.id === id));
+		else if (key === 'adopt' && words.every(sectionName))
+			row.adopt = words;
 		else
 			throw new Error(error);
 	});
 	if (!result.length || result[0].name !== 'global')
-		result.unshift({ name: 'global', address: '', presets: [], destinations: '', tcp: true, udp: true, ports: '' });
+		result.unshift({ name: 'global', address: '', presets: [], destinations: '', tcp: true, udp: true, ports: '', adopt: [] });
 	return result;
 }
 
@@ -146,8 +153,23 @@ function serialize(items, presets) {
 		const chosen = row.presets.filter(id => presets.some(preset => preset.id === id));
 		if (chosen.length)
 			lines.push('preset ' + chosen.join(' '));
+		const adopt = (row.adopt || []).filter(sectionName);
+		if (adopt.length)
+			lines.push('adopt ' + adopt.join(' '));
 	});
 	return lines.join('\n') + '\n';
+}
+
+// hand-made PBR policies: section, label, result and the rule it maps to
+function policies(text) {
+	const result = [];
+	(typeof text === 'string' ? text.split('\n') : []).forEach(line => {
+		const fields = line.split('\t');
+		if (fields.length === 5 && /^[a-z_]{1,32}$/.test(fields[3]) && (!fields[1] || fields[1] === '-' || sectionName(fields[1])) &&
+			(!fields[4] || ruleName(fields[4]) || fields[4] === 'global') && fields[2].length <= 64)
+			result.push({ section: fields[1] === '-' ? '' : fields[1], label: fields[2], status: fields[3], rule: fields[4] });
+	});
+	return result.slice(0, 256);
 }
 
 return baseclass.extend({
@@ -159,6 +181,7 @@ return baseclass.extend({
 	rows: rows,
 	name: name,
 	serialize: serialize,
+	policies: policies,
 
 	options: function(form, vpn, items, presets) {
 		if (!vpn || typeof vpn.selection !== 'string' || !(
@@ -196,7 +219,14 @@ return baseclass.extend({
 		});
 		if (!routes.length || !networks.length || !subnets.length)
 			throw new Error(error);
-		return { routes, networks, subnets, dns: result.dns, review: result.review,
+		const adopted = (typeof result.adopted === 'string' ? result.adopted.split('\n') : []).filter(Boolean).map(line => {
+			const fields = line.split('\t');
+			if (fields.length !== 3 || !names.includes(fields[0]) || !sectionName(fields[1]) || fields[2].length > 64)
+				throw new Error(error);
+			return { rule: fields[0], section: fields[1], label: fields[2] };
+		});
+		const client = typeof result.adopted_client === 'string' && sectionName(result.adopted_client) ? result.adopted_client : '';
+		return { routes, networks, subnets, dns: result.dns, review: result.review, adopted, client,
 			warnings: typeof result.warnings === 'string' ? result.warnings.split('\n') : [] };
 	}
 });

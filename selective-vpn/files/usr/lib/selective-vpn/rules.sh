@@ -74,11 +74,12 @@ svpn_rules_prepare() (
 	mkdir -m 700 "$work/rules" || exit 1
 	: > "$work/devices"
 	: > "$work/destinations"
+	: > "$work/adopt"
 	tab=$(printf '\t')
 	while IFS="$tab" read -r name section; do
 		row=$work/rules/$name
 		mkdir -m 700 "$row" || exit 1
-		for key in address proto dest_port destinations preset; do
+		for key in address proto dest_port destinations preset adopt; do
 			awk -F '\t' -v name="$section" -v key="$key" '
 				$1=="S" && $4==name { s=$2 }
 				$1=="V" && $2==s && $3==key { print $4 }' "$work/app.table" > "$row/$key.raw" || exit 1
@@ -100,6 +101,11 @@ svpn_rules_prepare() (
 		printf '%s\n' "$destinations" > "$row/destinations"
 		printf '%s\n' "$destinations" >> "$work/destinations"
 		presets=$(svpn_normalize_list identifier "$(cat "$row/preset.raw")") || exit 1
+		adopt=$(svpn_normalize_list identifier "$(cat "$row/adopt.raw")") || exit 1
+		for value in $adopt; do
+			! svpn_reserved_identifier "$value" && ! cut -f 1 "$work/adopt" | grep -qxF "$value" || exit 1
+			printf '%s\t%s\n' "$value" "$name" >> "$work/adopt"
+		done
 		mkdir -m 700 "$row/presets" || exit 1
 		for preset in $presets; do
 			mkdir -m 700 "$row/presets/$preset" && svpn_preset_load "$preset" "$row/presets/$preset" || exit 1
@@ -112,6 +118,7 @@ svpn_rules_prepare() (
 			printf "\toption proto '%s'\n\toption dest_port '%s'\n" "$(cat "$row/proto")" "$(cat "$row/dest_port")"
 			for value in $destinations; do printf "\tlist destinations '%s'\n" "$value"; done
 			for value in $presets; do printf "\tlist preset '%s'\n" "$value"; done
+			for value in $adopt; do printf "\tlist adopt '%s'\n" "$value"; done
 		} > "$row/active"
 	done < "$work/rows"
 	LC_ALL=C awk -v mode=scope -v scope=devices -f "$SVPN_LIBRARY_DIR/policy-check.awk" \
@@ -157,6 +164,16 @@ svpn_rules_policies() (
 			svpn_rules_policy "$work" "$interface" "${name}__${preset##*/}" "${sources% }" "$preset" || exit 1
 		done
 	done
+	tab=$(printf '\t')
+	while IFS="$tab" read -r adopted rule; do
+		kind=$(awk -F '\t' -v name="$adopted" '$1 == "S" && $4 == name { print $3 }' "$work/pbr.table") || exit 1
+		if [ -z "$kind" ]; then
+			svpn_rules_adopted "$adopted" || continue
+		elif [ "$kind" != policy ]; then
+			svpn_state_error "Rule $rule replaces a PBR section that is not a policy: $adopted"; exit 1
+		fi
+		svpn_policy_resource "$work" section "pbr.$adopted" missing < /dev/null || exit 1
+	done < "$work/adopt"
 	[ -e "$SVPN_PRIVATE_DIR/confirmed" ] || exit 0
 	confirmed=$(svpn_tx_pointer confirmed) && svpn_tx_load "$confirmed" || exit 1
 	for record in "$tx/manifest/"*; do
@@ -166,6 +183,14 @@ svpn_rules_policies() (
 		[ ! -e "$work/resources/section.$target" ] || continue
 		svpn_policy_resource "$work" section "$target" missing < /dev/null || exit 1
 	done
+)
+
+# a hand-made policy that the confirmed configuration already removed
+svpn_rules_adopted() (
+	[ "$#" -eq 1 ] && [ -e "$SVPN_PRIVATE_DIR/confirmed" ] || exit 1
+	confirmed=$(svpn_tx_pointer confirmed) && svpn_tx_load "$confirmed" || exit 1
+	key=$(svpn_tx_key section "pbr.$1") || exit 1
+	[ -d "$tx/manifest/$key" ] && [ "$(head -n 1 "$tx/manifest/$key/applied")" = missing ]
 )
 
 # id, label and warning of every shipped preset
@@ -187,14 +212,14 @@ svpn_rules_draft() (
 	awk -v package=selective-vpn -f "$SVPN_LIBRARY_DIR/uci-inspect.awk" "$1/draft.export" > "$1/draft.table" || exit 1
 	LC_ALL=C awk -F '\t' '
 		$1 == "S" { if ($3 == "rule" && $4 != "-") { row[$2] = $4; order[++n] = $4 } }
-		$1 == "V" && ($2 in row) && $3 ~ /^(address|proto|dest_port|destinations|preset)$/ {
+		$1 == "V" && ($2 in row) && $3 ~ /^(address|proto|dest_port|destinations|preset|adopt)$/ {
 			key = row[$2] SUBSEP $3
 			value[key] = value[key] == "" ? $4 : value[key] " " $4
 		}
 		function show(name,    i, k) {
 			print "rule " name
-			split("address proto dest_port destinations preset", keys, " ")
-			for (i = 1; i <= 5; i++) {
+			split("address proto dest_port destinations preset adopt", keys, " ")
+			for (i = 1; i <= 6; i++) {
 				k = name SUBSEP keys[i]
 				if (value[k] != "") print keys[i] " " value[k]
 			}
@@ -220,7 +245,7 @@ svpn_rules_save() (
 		$0 !~ /^[a-zA-Z0-9_. \/:-]*$/ { fail() }
 		$1 == "rule" { if (NF != 2 || seen[$2]++ || ++rows > 24) fail(); split("", got); next }
 		{
-			if (!rows || $1 !~ /^(address|proto|dest_port|destinations|preset)$/ || got[$1]++) fail()
+			if (!rows || $1 !~ /^(address|proto|dest_port|destinations|preset|adopt)$/ || got[$1]++) fail()
 			value = $0
 			sub(/^[ \t]*[^ \t]+[ \t]*/, "", value)
 			print value > (dir "/" rows "." $1)
@@ -248,12 +273,14 @@ svpn_rules_save() (
 		proto=$(svpn_rule_proto "$(field "$i" proto)") &&
 			ports=$(svpn_rule_ports "$(field "$i" dest_port)") &&
 			destinations=$(svpn_policy_destinations "$(field "$i" destinations)") &&
-			presets=$(svpn_normalize_list identifier "$(field "$i" preset)") || {
+			presets=$(svpn_normalize_list identifier "$(field "$i" preset)") &&
+			adopt=$(svpn_normalize_list identifier "$(field "$i" adopt)") || {
 			svpn_state_error "Invalid protocols, ports or destinations in rule $name."; exit 1;
 		}
 		for preset in $presets; do
 			svpn_preset_field "$preset" label > /dev/null || { svpn_state_error "Unknown routing preset: $preset"; exit 1; }
 		done
+		for value in $adopt; do ! svpn_reserved_identifier "$value" || exit 1; done
 		{
 			printf "config rule '%s'\n" "$name"
 			[ -z "$address" ] || printf "\toption address '%s'\n" "$address"
@@ -262,6 +289,7 @@ svpn_rules_save() (
 			[ -z "$ports" ] || printf "\toption dest_port '%s'\n" "${ports% }"
 			for value in $destinations; do printf "\tlist destinations '%s'\n" "$value"; done
 			for value in $presets; do printf "\tlist preset '%s'\n" "$value"; done
+			for value in $adopt; do printf "\tlist adopt '%s'\n" "$value"; done
 		} >> "$work/save/rules"
 	done < "$work/save/names"
 	[ "$i" -eq "$count" ] && [ "$global" = 1 ] || { svpn_state_error 'The Global rule is required.'; exit 1; }

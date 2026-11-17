@@ -3,12 +3,12 @@
 		"description": "Access Selective VPN",
 		"read": {
 			"ubus": {
-				"selective-vpn": [ "job", "status", "doctor", "settings", "rules", "clients", "profiles", "leases", "profile_summary", "pending" ]
+				"selective-vpn": [ "job", "status", "doctor", "settings", "rules", "clients", "profiles", "leases", "profile_summary", "pending", "client_check", "pbr_policies" ]
 			}
 		},
 		"write": {
 			"ubus": {
-				"selective-vpn": [ "import_profile", "set_credentials", "preview", "apply", "confirm", "reconnect", "enable", "disable", "rollback", "uninstall" ]
+				"selective-vpn": [ "import_profile", "adopt_client", "import_pbr", "set_credentials", "preview", "apply", "confirm", "reconnect", "enable", "disable", "rollback", "uninstall" ]
 			}
 		}
 	}

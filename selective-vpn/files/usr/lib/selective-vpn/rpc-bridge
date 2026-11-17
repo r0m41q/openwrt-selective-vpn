@@ -8,7 +8,7 @@ set -eu
 operation=$1
 stage=$2
 case "$operation" in
-	status|doctor|settings|rules|clients|profiles|leases|profile_summary|pending|import_profile|set_credentials|preview|apply|confirm|reconnect|enable|disable|rollback|uninstall) ;;
+	status|doctor|settings|rules|clients|profiles|leases|profile_summary|pending|client_check|pbr_policies|import_profile|adopt_client|import_pbr|set_credentials|preview|apply|confirm|reconnect|enable|disable|rollback|uninstall) ;;
 	*) exit 1 ;;
 esac
 case "$stage" in /tmp/selective-vpn-rpc.[a-zA-Z0-9][a-zA-Z0-9][a-zA-Z0-9][a-zA-Z0-9][a-zA-Z0-9][a-zA-Z0-9]) ;; *) exit 1 ;; esac
@@ -17,6 +17,9 @@ svpn_private_directory "$stage" || exit 1
 case "$operation" in
 	profile_summary|confirm) allowed=' id ' ;;
 	import_profile) allowed=' profile ' ;;
+	client_check|adopt_client) allowed=' client ' ;;
+	pbr_policies) allowed=' mode selection ' ;;
+	import_pbr) allowed=' mode selection rules ' ;;
 	set_credentials) allowed=' id username password ' ;;
 	preview) allowed=' mode selection networks rules ack peer ' ;;
 	apply) allowed=' mode selection networks ack peer review ' ;;
@@ -50,7 +53,7 @@ for input in "$stage"/* "$stage"/.[!.]* "$stage"/..?*; do
 done
 
 case "$operation" in
-	import_profile|set_credentials|preview|settings|rules|clients|profiles|leases|profile_summary|pending)
+	import_profile|adopt_client|import_pbr|client_check|pbr_policies|set_credentials|preview|settings|rules|clients|profiles|leases|profile_summary|pending)
 		runtime=$(svpn_runtime_directory) || exit 1
 		if [ ! -e "$runtime/lifecycle.lock" ] && [ ! -L "$runtime/lifecycle.lock" ]; then
 			(umask 077; set -C; : > "$runtime/lifecycle.lock") 2>/dev/null || :
@@ -61,7 +64,7 @@ case "$operation" in
 esac
 
 field() {
-	case "$1" in mode|selection|networks|rules|ack|peer|review|profile|username|password|id) ;; *) return 1 ;; esac
+	case "$1" in mode|selection|networks|rules|ack|peer|review|profile|username|password|id|client) ;; *) return 1 ;; esac
 	[ -e "$stage/$1" ] || { printf ''; return 0; }
 	svpn_private_file "$stage/$1" || return 1
 	[ "$(wc -c < "$stage/$1")" -le 32768 ] || return 1
@@ -71,6 +74,21 @@ field() {
 profile_bundle() {
 	printf '%s\n' "$1" | grep -Eq '^profile\.[a-zA-Z0-9]{8}$' || return 1
 	svpn_private_directory "$SVPN_PROFILE_DIR/$1"
+}
+
+# an existing client named by the user, never one of ours
+client_name() {
+	client=$(field client) && svpn_valid_identifier "$client" && ! svpn_reserved_identifier "$client"
+}
+
+# the next tunnel name that no imported profile uses
+next_tun() {
+	blocked=$(for old in "$SVPN_PROFILE_DIR"/profile.*/client.ovpn; do
+		[ -e "$old" ] || continue
+		svpn_private_file "$old" || exit 1
+		awk '$1 == "dev" && $2 ~ /^tun_sv[0-9]+$/ { print $2 }' "$old" || exit 1
+	done) || return 1
+	printf '%s\n' "$blocked" | svpn_select_tun
 }
 
 json_init
@@ -137,16 +155,49 @@ case "$operation" in
 		json_add_string id "$id" ;;
 	import_profile)
 		svpn_private_file "$stage/profile" || exit 1
-		blocked=$(for old in "$SVPN_PROFILE_DIR"/profile.*/client.ovpn; do
-			[ -e "$old" ] || continue
-			svpn_private_file "$old" || exit 1
-			awk '$1 == "dev" && $2 ~ /^tun_sv[0-9]+$/ { print $2 }' "$old" || exit 1
-		done) || exit 1
-		tun=$(printf '%s\n' "$blocked" | svpn_select_tun) || exit 1
+		tun=$(next_tun) || exit 1
 		bundle=$(svpn_profile_import "$tun" < "$stage/profile") || exit 1
 		id=${bundle##*/}
 		profile_bundle "$id" || exit 1
 		json_add_string id "$id" ;;
+	client_check)
+		client_name || exit 1
+		value=$(svpn_client_check "$client") || exit 1
+		json_add_string problems "$value" ;;
+	adopt_client)
+		client_name || exit 1
+		tun=$(next_tun) || exit 1
+		bundle=$(svpn_profile_adopt "$client" "$tun") || exit 1
+		id=${bundle##*/}
+		profile_bundle "$id" || exit 1
+		json_add_string id "$id" ;;
+	pbr_policies|import_pbr)
+		mode=$(field mode) && selection=$(field selection) || exit 1
+		case "$mode" in
+			managed) profile_bundle "$selection" || exit 1 ;;
+			external) svpn_valid_identifier "$selection" && ! svpn_reserved_identifier "$selection" || exit 1 ;;
+			*) exit 1 ;;
+		esac
+		save=0
+		if [ "$operation" = import_pbr ]; then
+			save=1
+			runtime=$(svpn_runtime_directory) || exit 1
+			work=$(mktemp -d "$runtime/rules.XXXXXXXX") || exit 1
+			trap 'rm -rf -- "$work"' EXIT
+			# keep the rows edited in LuCI before adding imported ones
+			if ! field rules | svpn_rules_save "$work"; then
+				json_add_boolean ok 0
+				json_add_string code rules
+				json_dump
+				exit 0
+			fi
+		fi
+		value=$(svpn_pbr_import "$mode" "$selection" "$save") || exit 1
+		json_add_string policies "$value"
+		if [ "$save" = 1 ]; then
+			value=$(svpn_rules_draft "$work") || exit 1
+			json_add_string rules "$value"
+		fi ;;
 	set_credentials)
 		id=$(field id) && profile_bundle "$id" || exit 1
 		username=$(field username) && password=$(field password) || exit 1

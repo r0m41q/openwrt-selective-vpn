@@ -7,7 +7,7 @@ const schema = {
 	configuration: { enabled: 'bool', rules: 'number', pending_uci: 'present absent unknown', owned_settings: 'match changed unknown' },
 	recovery: { state: 'none preparing armed applying applied awaiting_confirmation confirmed recovering runtime_recovery conflict rolled_back unknown', seconds_remaining: 'number', supervisor: 'running stopped unknown' },
 	dependencies: {},
-	vpn: { process: 'running stopped unverified unknown', ipv4: 'usable missing invalid unknown', tunnel: 'ready not_ready unknown', logical_interface: 'attached detached unknown' },
+	vpn: { process: 'running stopped unverified unknown', ipv4: 'usable missing invalid unknown', tunnel: 'ready not_ready unknown', logical_interface: 'attached detached unknown', replaced_client: 'none stopped running unknown' },
 	routing: { main_ipv4_default: 'present missing unknown', ipv6_default: 'present missing unknown', vpn_default: 'present missing unknown', mark_rule: 'present missing unknown', activation_baseline: 'unchanged changed stale unknown' },
 	pbr: { version: 'supported unsupported unknown', service: 'running stopped unknown', errors: 'present absent unknown', policy_configuration: 'match changed unknown' },
 	dns: { nftset_capability: 'supported unsupported unknown', integration: 'ready not_ready not_required unknown', sets: 'number', population: 'nonempty empty unknown not_required', resolution: 'not_probed' },

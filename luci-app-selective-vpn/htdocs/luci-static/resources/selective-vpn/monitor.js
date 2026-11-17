@@ -161,6 +161,7 @@ return view.extend({
 			data.routing.mark_rule !== 'present' || data.evidence.policy_rules !== 'observed'))
 			warnings.push(_('Routing prerequisites are missing or unverified. Check VPN, PBR, routes and diagnostics.'));
 		if (data.configuration.enabled === true && !['ready', 'not_required'].includes(data.dns.integration)) warnings.push(_('Domain routing is not ready. Check router DNS and dnsmasq nftset support.'));
+		if (data.vpn.replaced_client === 'running') warnings.push(_('The OpenVPN client this profile replaced is running again. Two connections to one provider can drop each other; stop the old client.'));
 		if (data.configuration.enabled === true && data.recovery.supervisor !== 'running') warnings.push(_('The recovery supervisor is not confirmed running. Check it over SSH before network changes.'));
 		this.warnings.replaceChildren(...warnings.map(text => E('p', { 'class': 'alert-message warning' }, [text])));
 		if (!this.diagnostic) {

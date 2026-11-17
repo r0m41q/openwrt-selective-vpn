@@ -46,6 +46,17 @@ class RpcTests(unittest.TestCase):
                 printf '%s\\n' "$@" > "$test_root/previewed";
             }}
             svpn_profile_credentials() {{ cat > "$test_root/received"; }}
+            svpn_valid_identifier() {{
+                case "$1" in ''|[!a-zA-Z_]*|*[!a-zA-Z0-9_]*) return 1 ;; esac
+            }}
+            svpn_reserved_identifier() {{
+                case "$1" in svpn_*) return 0 ;; *) return 1 ;; esac
+            }}
+            svpn_client_check() {{
+                printf '%s\n' "$1" > "$test_root/checked"
+            }}
+            svpn_pbr_import() {{ printf '%s\n' "$@" > "$test_root/imported"; }}
+            svpn_rules_draft() {{ printf 'rule global\n'; }}
             """
         )
         self.jshn = self.root / "jshn.sh"
@@ -66,7 +77,7 @@ class RpcTests(unittest.TestCase):
         path = self.stage / name
         path.write_text(value)
         path.chmod(0o600)
-        self.addCleanup(path.unlink)
+        self.addCleanup(path.unlink, missing_ok=True)
 
     def run_bridge(self, operation, stage=None):
         return subprocess.run(
@@ -95,12 +106,15 @@ class RpcTests(unittest.TestCase):
                 "leases",
                 "profile_summary",
                 "pending",
+                "client_check",
+                "pbr_policies",
             },
         )
         self.assertNotIn("file", acl["read"])
         self.assertNotIn("file", acl["write"])
         self.assertNotIn("uci", acl["write"])
         self.assertIn("reconnect", write)
+        self.assertTrue({"adopt_client", "import_pbr"} <= write)
 
     def test_profiles_and_summary_do_not_read_credentials(self):
         bundle = self.root / "profiles/profile.abcdefgh"
@@ -218,6 +232,41 @@ class RpcTests(unittest.TestCase):
         (self.stage / "rules").write_text("rule global\n")
         self.field("review", "a" * 64)
         self.assertNotEqual(self.run_bridge("preview").returncode, 0)
+
+    def test_client_check_takes_only_existing_client_names(self):
+        self.field("client", "personal")
+        result = self.run_bridge("client_check")
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertEqual((self.root / "checked").read_text(), "personal\n")
+        for value in ("svpn_client", "bad name", "../x"):
+            (self.stage / "client").write_text(value)
+            self.assertNotEqual(self.run_bridge("client_check").returncode, 0)
+            self.assertNotEqual(self.run_bridge("adopt_client").returncode, 0)
+
+    def test_policy_import_saves_edited_rows_first(self):
+        for name, value in {
+            "mode": "external",
+            "selection": "personal",
+            "rules": "rule global\n",
+        }.items():
+            self.field(name, value)
+        result = self.run_bridge("import_pbr")
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertEqual((self.root / "saved").read_text(), "rule global\n")
+        self.assertEqual(
+            (self.root / "imported").read_text().split(),
+            ["external", "personal", "1"],
+        )
+        self.assertNotEqual(self.run_bridge("pbr_policies").returncode, 0)
+        (self.stage / "rules").unlink()
+        result = self.run_bridge("pbr_policies")
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertEqual(
+            (self.root / "imported").read_text().split(),
+            ["external", "personal", "0"],
+        )
+        (self.stage / "selection").write_text("svpn_client")
+        self.assertNotEqual(self.run_bridge("pbr_policies").returncode, 0)
 
     def test_credentials_are_stdin_only_and_id_is_bounded(self):
         bundle = self.root / "profiles/profile.abcdefgh"

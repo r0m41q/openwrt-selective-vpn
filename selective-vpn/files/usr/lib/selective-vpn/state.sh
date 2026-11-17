@@ -81,7 +81,8 @@ svpn_resource_target() (
 			case "$1" in selective-vpn|network|firewall|openvpn|pbr|dhcp) ;; *) exit 1 ;; esac
 			svpn_valid_identifier "${2:-}" || exit 1
 			if [ "$kind" = section ]; then
-				[ "$#" -eq 2 ] && svpn_reserved_identifier "$2" || exit 1
+				# hand-made PBR policies are the only sections the app may take over
+				[ "$#" -eq 2 ] && { svpn_reserved_identifier "$2" || [ "$1" = pbr ]; } || exit 1
 			else
 				[ "$#" -eq 3 ] && svpn_valid_identifier "$3" || exit 1
 				# whole owned sections and shared options cannot overlap

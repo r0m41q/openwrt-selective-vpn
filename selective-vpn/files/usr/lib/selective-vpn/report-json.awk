@@ -31,6 +31,7 @@ BEGIN {
 	field("vpn.ipv4", "usable missing invalid unknown", "unknown")
 	field("vpn.tunnel", "ready not_ready unknown", "unknown")
 	field("vpn.logical_interface", "attached detached unknown", "unknown")
+	field("vpn.replaced_client", "none stopped running unknown", "unknown")
 	field("routing.main_ipv4_default", "present missing unknown", "unknown")
 	field("routing.ipv6_default", "present missing unknown", "unknown")
 	field("routing.vpn_default", "present missing unknown", "unknown")

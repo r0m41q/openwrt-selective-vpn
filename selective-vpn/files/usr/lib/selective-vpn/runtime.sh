@@ -4,6 +4,8 @@ svpn_service() (
 	[ "$#" -ge 2 ] || exit 1
 	case "$*" in
 		'openvpn start svpn_client'|'openvpn stop svpn_client'|'pbr reload'|'pbr stop'|'pbr running'|'pbr version'|'firewall reload') ;;
+		# a client that a copied profile replaced
+		'openvpn start '*|'openvpn stop '*) [ "$#" -eq 3 ] && svpn_valid_identifier "$3" && ! svpn_reserved_identifier "$3" || exit 1 ;;
 		*) exit 1 ;;
 	esac
 	# the helper retains our locks until the bounded service group exits
@@ -42,13 +44,17 @@ svpn_forward_restore() (
 svpn_runtime_check() (
 	[ "$#" -eq 3 ] && svpn_private_directory "$1" && svpn_valid_netdev "$2" || exit 1
 	work=$1 tun=$2 eligible=$3
-	old_tun=''
+	old_tun='' skip=''
 	[ ! -e "$work/before.device" ] || old_tun=$(svpn_state_read "$work/before.device") || exit 1
+	# routes of a replaced client go away with it and come back on rollback
+	for direction in before after; do
+		[ ! -e "$work/$direction.adopted_device" ] || skip="$skip $(svpn_state_read "$work/$direction.adopted_device")" || exit 1
+	done
 	svpn_private_file "$eligible" || exit 1
 	for family in 4 6; do
 		svpn_ip "-$family" -o route show table main > "$work/current$family" || exit 1
 		[ "$(wc -c < "$work/current$family")" -le "$SVPN_MAX_SNAPSHOT_BYTES" ] || exit 1
-		awk -v before="$work/routes$family" -v eligible="$eligible" -v tun="$tun" -v old_tun="$old_tun" -v family="$family" \
+		awk -v before="$work/routes$family" -v eligible="$eligible" -v tun="$tun" -v old_tun="$old_tun" -v skip="$skip " -v family="$family" \
 			-f "$SVPN_LIBRARY_DIR/route-check.awk" "$eligible" "$work/routes$family" "$work/current$family" || {
 			svpn_state_error 'WAN or local routes changed during activation.'; exit 1;
 		}

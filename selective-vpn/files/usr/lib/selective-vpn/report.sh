@@ -273,6 +273,19 @@ svpn_report_vpn() {
 		esac
 	fi
 	svpn_report_set vpn.process "$process"
+	# a client copied into a managed profile should no longer run
+	replaced=none adopted=''
+	[ ! -e "$report_meta/after.adopted" ] || adopted=$(svpn_state_read "$report_meta/after.adopted") || adopted=''
+	if [ -n "$adopted" ]; then
+		replaced=unknown
+		if [ -f "$report_work/vpn.json" ] && svpn_valid_identifier "$adopted"; then
+			case "$(svpn_json_field "$report_work/vpn.json" "@.openvpn.instances.$adopted.running" || :)" in
+				true) replaced=running ;;
+				*) replaced=stopped ;;
+			esac
+		fi
+	fi
+	svpn_report_set vpn.replaced_client "$replaced"
 	svpn_report_set vpn.tunnel not_ready
 	if svpn_report_capture "$report_work/address" "$SVPN_IP" -4 -o address show dev "$tun" scope global; then
 		addresses=$(awk '$3 == "inet" {print $4}' "$report_work/address")

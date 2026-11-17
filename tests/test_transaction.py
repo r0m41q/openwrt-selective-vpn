@@ -626,7 +626,7 @@ d'\\''\nline two'\n"
         )
         self.invoke("recover")
         identifier = self.begin()
-        self.write(self.txdir(identifier) / "work/large", "x" * 2097152)
+        self.write(self.txdir(identifier) / "work/large", "x" * 4194304)
         self.assertEqual(self.add(identifier, check=False).returncode, 1)
         self.assertEqual((self.config / "pbr").read_text(), CONFIG)
 

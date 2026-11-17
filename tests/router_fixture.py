@@ -83,9 +83,15 @@ def service(name, action, *rest):
                     )
                 )
                 (root / "pbr.dnsmasq").unlink(missing_ok=True)
-    if name == "openvpn":
-        if rest != ("svpn_client",):
+    if name == "openvpn" and rest != ("svpn_client",):
+        # a client that a copied profile replaced
+        if len(rest) != 1 or not re.fullmatch(r"[a-z]+", rest[0]):
             raise ValueError("unscoped VPN mutation")
+        if action == "start":
+            (root / f"client-{rest[0]}").touch(mode=0o600)
+        elif action == "stop":
+            (root / f"client-{rest[0]}").unlink(missing_ok=True)
+    elif name == "openvpn":
         path = root / "sysnet/tun_sv0"
         if action == "start" and not flag("no-vpn"):
             path.mkdir(parents=True, exist_ok=True)

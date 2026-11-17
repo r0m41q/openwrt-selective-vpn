@@ -5,6 +5,8 @@
 const parameters = {
 	settings: [], rules: [], clients: [], profiles: [], leases: [], status: [], doctor: [], pending: [],
 	profile_summary: ['id'], import_profile: ['profile'],
+	client_check: ['client'], adopt_client: ['client'],
+	pbr_policies: ['mode', 'selection'], import_pbr: ['mode', 'selection', 'rules'],
 	set_credentials: ['id', 'username', 'password'],
 	reconnect: ['peer'], enable: ['peer'], disable: ['peer'], rollback: ['peer'], confirm: ['id']
 };

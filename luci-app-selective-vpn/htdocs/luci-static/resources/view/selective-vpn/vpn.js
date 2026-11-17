@@ -12,6 +12,18 @@ function field(label, input, help) {
 	]);
 }
 
+const problems = {
+	disabled: _('The client is disabled.'),
+	uci_only: _('The client has no configuration file. It can only be copied.'),
+	hooks: _('The client runs custom scripts.'),
+	device: _('Set a fixed tunnel name such as dev tun0, with dev-type tun.'),
+	route_nopull: _('Add route-nopull so the server cannot change routing.'),
+	ipv6_filter: _('Add pull-filter ignore "ifconfig-ipv6".'),
+	routes: _('Remove redirect-gateway and route lines.'),
+	dns: _('Remove dhcp-option and dns lines.'),
+	unsupported: _('Unsupported setting: ')
+};
+
 function lines(text, pattern) {
 	return typeof text === 'string' ? text.split('\n').filter(value => pattern.test(value)) : [];
 }
@@ -55,7 +67,7 @@ return view.extend({
 
 	updateControls: function() {
 		const locked = this.busy || this.readonly || !this.loaded;
-		[this.mode, this.profiles, this.clients, this.file, this.upload, this.save, this.username, this.password].forEach(node => {
+		[this.mode, this.profiles, this.clients, this.file, this.upload, this.save, this.username, this.password, this.copy].forEach(node => {
 			node.disabled = locked;
 		});
 		this.refresh.disabled = this.busy;
@@ -63,6 +75,7 @@ return view.extend({
 		this.external.hidden = this.mode.value !== 'external';
 		this.credentials.hidden = this.mode.value !== 'managed' || !this.authRequired;
 		this.save.disabled = locked || !this.authRequired;
+		this.copy.disabled = locked || !this.clients.value;
 		this.reconnect.disabled = locked || this.settings.enabled !== '1' || this.settings.mode !== 'managed' ||
 			this.current().mode !== 'managed' || this.current().selection !== this.settings.selection;
 	},
@@ -72,7 +85,10 @@ return view.extend({
 		this.username.value = '';
 		this.password.value = '';
 		this.summary.replaceChildren();
+		this.checks.replaceChildren();
 		this.updateControls();
+		if (this.mode.value === 'external' && this.clients.value)
+			return this.showCheck();
 		if (this.mode.value !== 'managed' || !this.profiles.value)
 			return;
 		const result = await api.call('profile_summary', this.profiles.value);
@@ -90,12 +106,46 @@ return view.extend({
 			[_('Remote endpoints'), /^[0-9]{1,2}$/.test(values.remote_count) ? values.remote_count : _('Unknown')],
 			[_('Peer verification'), values.peer_verification === 'fingerprint' ? _('Certificate fingerprint') :
 				values.peer_verification === 'ca' ? _('Certificate authority') : _('Unknown')],
+			...(/^[a-zA-Z_][a-zA-Z0-9_]{0,62}$/.test(values.adopted_client || '') ? [[_('Replaces OpenVPN client'),
+				values.adopted_client + ' (' + _('disabled when this profile starts') + ')']] : []),
 			[_('Authentication'), this.authRequired ?
 				(result.credentials_saved === true ? _('Credentials saved') : _('Username and password required')) :
 				_('No username or password required')]
 		];
 		this.summary.replaceChildren(E('table', { 'class': 'table' }, rows.map(row =>
 			E('tr', { 'class': 'tr' }, [E('th', { 'class': 'th' }, [row[0]]), E('td', { 'class': 'td' }, [row[1]])]))));
+	},
+
+	// everything that keeps an existing client from being used as it is
+	showCheck: async function() {
+		const result = await api.call('client_check', this.clients.value);
+		const found = (typeof result.problems === 'string' ? result.problems.split('\n') : []).filter(Boolean).map(line => {
+			const fields = line.split('\t');
+			return Object.prototype.hasOwnProperty.call(problems, fields[0]) ?
+				problems[fields[0]] + (fields[0] === 'unsupported' ? fields.slice(1).join(' ').slice(0, 160) : '') : '';
+		}).filter(Boolean);
+		this.checks.replaceChildren(found.length ? E('div', {}, [
+			E('p', {}, [_('This client cannot be used as it is:')]),
+			E('ul', {}, found.map(text => E('li', {}, [text]))),
+			E('p', {}, [_('Fix these in its OpenVPN configuration, or copy it into a managed profile, which handles all of them.')])
+		]) : E('p', {}, [_('This client looks compatible. Copying it into a managed profile also works.')]));
+	},
+
+	copyClient: async function() {
+		const client = this.clients.value;
+		if (!client)
+			throw new Error(_('Choose a client first.'));
+		this.message(_('Copying the client…'));
+		const result = await api.call('adopt_client', client).catch(() => {
+			throw new Error(_('The client could not be copied. Its certificate, key and password files must be readable by root and not writable by others, and the profile must pass the same checks as an upload.'));
+		});
+		if (!/^profile\.[a-zA-Z0-9]{8}$/.test(result.id))
+			throw new Error(_('The copied profile could not be identified. Reload this page.'));
+		this.profiles.appendChild(E('option', { value: result.id }, [result.id]));
+		this.profiles.value = result.id;
+		this.mode.value = 'managed';
+		await this.select();
+		this.message(_('Copied. The old client keeps running until you apply routing, then it is disabled. Its PBR policies can be imported on the Routing page.'));
 	},
 
 	select: async function() {
@@ -268,8 +318,11 @@ return view.extend({
 			field(_('Upload or replace profile'), this.file, _('TUN client profile, up to 32 KiB. Certificates and keys must be inline.')),
 			this.upload, this.summary, this.credentials
 		]);
+		this.checks = E('div');
+		this.copy = button(_('Copy into a managed profile'), () => this.copyClient());
 		this.external = E('div', {}, [field(_('Existing client'), this.clients),
-			E('p', {}, [_('Start this client and manage its credentials through its existing OpenVPN configuration. Compatibility is checked before routing changes are applied.')])
+			E('p', {}, [_('Start this client and manage its credentials through its existing OpenVPN configuration. Compatibility is checked before routing changes are applied.')]),
+			this.checks, this.copy
 		]);
 		this.feedback = E('p', { role: 'status', 'aria-live': 'polite' });
 		this.status = E('p', { role: 'status', 'aria-live': 'polite' });

@@ -28,6 +28,8 @@ The current build has a core `selective-vpn` package and a `luci-app-selective-v
 
 Use stable UCI names beginning with `svpn_` for owned policies, firewall sections, and the managed OpenVPN client. Allocate and remember unused network and TUN names; never adopt an existing section because its name matches. Record original and applied values for every shared option or list entry. Existing VPN clients remain user-owned.
 
+Two user-owned resources can be taken over, and only on explicit request. A hand-made PBR policy that a rule replaces is journaled and removed as a whole section; its rule carries the section name in `adopt`, and the journal keeps the original for rollback, disable, uninstall or removal of the rule. A copied OpenVPN client gets `enabled '0'` (and `enable '0'` when set) through the same journal, and is stopped and started with the change. Restores skip anything the user changed since. Unnamed PBR policies are given a section name on import so the journal can address them; PBR does not use section names.
+
 Core dependencies include `pbr`, `openvpn-openssl`, and their resolved networking dependencies. Verify `ip-full`, nftables JSON support, firewall4, TUN support, UCI, and JSON utilities. The frontend adds `luci-base` and the required rpcd/ucode modules, following the [25.12 LuCI runtime dependencies](https://github.com/openwrt/luci/blob/75a306df84a020c57a631ef5b4c02ace56d93387/modules/luci-base/Makefile). `luci-app-pbr` and `luci-app-openvpn` are optional conveniences. Resolver changes require a separate installer check and confirmation.
 
 ## Traffic selection

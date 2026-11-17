@@ -21,6 +21,8 @@ The installer checks the router, shows every package change and asks before inst
 3. For each rule, tick presets or enter your own domains, IPv4 addresses and subnets. Choose TCP, UDP and ports if you need to.
 4. Click **Preview changes**, check the routes, then **Apply**. Make sure you can still open the router, then click **Confirm** within two minutes. Otherwise the change rolls back.
 
+Already route traffic through OpenVPN with PBR policies you made by hand? Copy the client on the VPN page and import its policies on the Routing page. The app takes both over when you apply, and gives them back when you disable or uninstall it.
+
 Devices must use the router for DNS for domain rules to work. Only IPv4 traffic is routed. See [routing](docs/routing.md), [presets](docs/presets.md) and [diagnostics](docs/diagnostics.md).
 
 ## Remove

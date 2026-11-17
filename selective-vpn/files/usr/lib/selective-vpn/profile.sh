@@ -103,3 +103,14 @@ svpn_profile_credentials() (
 	mv -f -- "$work/input" "$1/credentials" || exit 1
 	svpn_private_file "$1/credentials"
 )
+
+# the client an imported profile replaces, empty when it has none
+svpn_adopted_client() (
+	[ "$#" -eq 1 ] || exit 1
+	summary=$SVPN_PROFILE_DIR/$1/summary
+	[ -e "$summary" ] || [ -L "$summary" ] || exit 0
+	svpn_private_file "$summary" || exit 1
+	client=$(awk -F '=' '$1 == "adopted_client" { print $2; exit }' "$summary") || exit 1
+	[ -z "$client" ] || { svpn_valid_identifier "$client" && ! svpn_reserved_identifier "$client"; } || exit 1
+	printf '%s\n' "$client"
+)
