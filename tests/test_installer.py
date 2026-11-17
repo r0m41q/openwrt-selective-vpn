@@ -379,6 +379,22 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("DNS listeners", result.stderr.decode())
         self.no_mutations()
 
+    def test_jailed_dnsmasq_child_owns_the_listeners(self):
+        for pid, parent in ((43, 1), (44, 42)):
+            (self.root / f"proc/{pid}/fd").mkdir(parents=True)
+            (self.root / f"proc/{pid}/status").write_text(
+                f"Name:\tdnsmasq\nPPid:\t{parent}\n"
+            )
+        # an unrelated process may not own a listener
+        (self.root / "proc/42/fd/124").rename(self.root / "proc/43/fd/124")
+        result = self.run_install("y\n")
+        self.assertIn("DNS listeners", result.stderr.decode())
+        self.no_mutations()
+        (self.root / "proc/42/fd/123").rename(self.root / "proc/44/fd/123")
+        (self.root / "proc/43/fd/124").rename(self.root / "proc/44/fd/124")
+        result = self.run_install("y\n")
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+
     def test_custom_dns_layouts(self):
         path = self.root / "etc/config/dhcp"
         for text in (

@@ -225,6 +225,22 @@ ftset\n",
             self.write(self.root / "dnsmasq.service", value)
             self.reject()
 
+    def test_jailed_dnsmasq_child_may_own_the_listeners(self):
+        proc = self.root / "proc"
+        (proc / "456").mkdir(parents=True)
+        common = self.f.library / "common.sh"
+        common.write_text(
+            common.read_text().replace(
+                "readonly SVPN_PROC_DIR='/proc'",
+                f"readonly SVPN_PROC_DIR='{proc}'",
+            )
+        )
+        self.write(self.root / "listeners", LISTENERS.replace("123", "456"))
+        (proc / "456/status").write_text("Name:\tdnsmasq\nPPid:\t1\n")
+        self.reject()
+        (proc / "456/status").write_text("Name:\tdnsmasq\nPPid:\t123\n")
+        self.plan()
+
     def test_resolver_instance_selection_is_preserved(self):
         for value in ("*", "0", "main"):
             self.dhcp("config dnsmasq 'main'\n")

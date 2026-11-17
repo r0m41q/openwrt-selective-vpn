@@ -221,9 +221,16 @@ dns_listener() (
 	pid=$(jsonfilter -i "$work/dns-service" -e '@.dnsmasq.instances.*.pid') || exit 1
 	case "$pid" in ''|*[!0-9]*) exit 1 ;; esac
 	: > "$work/dns-sockets"
-	for fd in "$proc/$pid/fd/"*; do
-		link=$(readlink "$fd" 2>/dev/null) || continue
-		case "$link" in socket:\[*\]) printf '%s\n' "$link" >> "$work/dns-sockets" ;; esac
+	# procd may start dnsmasq in a jail, and then its child owns the sockets
+	for task in "$proc/"[0-9]*; do
+		if [ "${task##*/}" != "$pid" ]; then
+			parent=$(awk '$1 == "PPid:" { print $2; exit }' "$task/status" 2>/dev/null) || continue
+			[ "$parent" = "$pid" ] || continue
+		fi
+		for fd in "$task/fd/"*; do
+			link=$(readlink "$fd" 2>/dev/null) || continue
+			case "$link" in socket:\[*\]) printf '%s\n' "$link" >> "$work/dns-sockets" ;; esac
+		done
 	done
 	: > "$work/dns-listeners"
 	for table in tcp udp tcp6 udp6; do

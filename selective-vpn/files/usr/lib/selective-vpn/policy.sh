@@ -74,11 +74,19 @@ svpn_dns_check() (
 	[ "$running" = true ] && svpn_valid_uint "$pid" 999999999 && [ "$pid" -gt 0 ] || {
 		svpn_state_error 'One running OpenWrt dnsmasq instance is required.'; exit 1;
 	}
+	# procd may start dnsmasq in a jail, and then its child owns the sockets
+	pids=$pid
+	for status in "$SVPN_PROC_DIR/"[0-9]*/status; do
+		parent=$(awk '$1 == "PPid:" { print $2; exit }' "$status" 2>/dev/null) || continue
+		[ "$parent" = "$pid" ] || continue
+		child=${status%/status}
+		pids="$pids ${child##*/}"
+	done
 	ss -H -4 -lnptu > "$work/listeners" 2>/dev/null || {
 		svpn_state_error 'DNS listeners could not be inspected.'; exit 1;
 	}
 	[ "$(wc -c < "$work/listeners")" -le "$SVPN_MAX_SNAPSHOT_BYTES" ] || exit 1
-	LC_ALL=C awk -v resolver_instance="$resolver_instance" -v expected_pid="$pid" -f "$SVPN_LIBRARY_DIR/dns-check.awk" \
+	LC_ALL=C awk -v resolver_instance="$resolver_instance" -v dnsmasq_pids="$pids" -f "$SVPN_LIBRARY_DIR/dns-check.awk" \
 		"$work/dhcp.table" "$work/routers" "$work/listeners" || exit 1
 	printf '%s\n' 'client_dns_must_use_router' 'encrypted_dns_and_cached_answers_may_bypass_sets' >> "$work/warnings"
 	svpn_state_mark "$work/dns" 'dnsmasq.nftset'

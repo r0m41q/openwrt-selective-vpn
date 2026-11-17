@@ -23,7 +23,8 @@ FILENAME ~ /\/listeners$/ {
 	if (protocol == "tcp" && state != "LISTEN") next
 	if (protocol == "udp" && state != "UNCONN") next
 	if ($0 !~ /users:\(\("dnsmasq",pid=[0-9]+,fd=[0-9]+\)\)/) fail("Another service owns a DNS listener. Check the DNS forwarding layout.")
-	if (!index($0, "pid=" expected_pid ",fd=")) fail("A DNS listener does not belong to the OpenWrt dnsmasq instance.")
+	owner = $0; sub(/.*pid=/, "", owner); sub(/,.*/, "", owner)
+	if (!index(" " dnsmasq_pids " ", " " owner " ")) fail("A DNS listener does not belong to the OpenWrt dnsmasq instance.")
 	address = endpoint; sub(/:53$/, "", address)
 	if (address == "0.0.0.0" || address == "*") wildcard[protocol] = 1
 	else listening[protocol,address] = 1
