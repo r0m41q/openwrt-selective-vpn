@@ -485,7 +485,7 @@ firmware=$(jsonfilter -i "$work/board" -e '@.release.version') || die 'Cannot re
 case "$firmware" in 25.12.[0-9]|25.12.[0-9][0-9]) ;; *) die 'This installer currently supports stable OpenWrt 25.12 releases.' ;; esac
 architecture=$(apk --print-arch) || die 'Cannot read the APK architecture.'
 case "$architecture" in ''|*[!a-zA-Z0-9_-]*) die 'Invalid APK architecture.' ;; esac
-space / 32768 && space "$temporary" 32768 || die 'At least 32 MiB free flash and temporary space are required.'
+space / 8192 && space "$temporary" 8192 || die 'At least 8 MiB free flash and temporary space are required.'
 manifest > "$work/before" || die 'Cannot read installed packages.'
 case "$(installed_version pbr)" in ''|1.2.2-r[0-9]*) ;; *) die 'PBR 1.2.2 is required by this backend.' ;; esac
 for name in $saved_files; do

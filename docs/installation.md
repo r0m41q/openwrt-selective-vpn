@@ -15,7 +15,7 @@ Options:
 - `--no-luci` installs only the backend. You then have no way to set up routing.
 - `--recover` restores an interrupted installation.
 
-The installer needs OpenWrt 25.12 with APK, at least 32 MiB free in flash and `/tmp`, and working package feeds. It:
+The installer needs OpenWrt 25.12 with APK, at least 8 MiB free in flash and `/tmp`, and working package feeds. It:
 
 1. Installs curl if it is missing, after asking.
 2. Downloads the release checksum list and signing key over HTTPS. It checks every download against that list.
