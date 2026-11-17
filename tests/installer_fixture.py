@@ -251,6 +251,9 @@ elif command == "uci":
     if args[1] == "export":
         print((root / "etc/config/dhcp").read_text())
     elif args[1] == "changes":
+        # real uci fails for a config that does not exist
+        if not (root / "etc/config" / args[2]).exists():
+            sys.exit(1)
         if flag("unsaved-edits"):
             print("dhcp.lan.ignore='1'")
     elif args[1] == "get":

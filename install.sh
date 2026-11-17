@@ -489,6 +489,8 @@ space / 8192 && space "$temporary" 8192 || die 'At least 8 MiB free flash and te
 manifest > "$work/before" || die 'Cannot read installed packages.'
 case "$(installed_version pbr)" in ''|1.2.2-r[0-9]*) ;; *) die 'PBR 1.2.2 is required by this backend.' ;; esac
 for name in $saved_files; do
+	# uci fails for configs that do not exist yet, and those have no edits
+	[ -e "$config/$name" ] || continue
 	changes=$(uci -q changes "$name") || die 'Cannot check pending UCI edits.'
 	[ -z "$changes" ] || die 'Commit or discard pending UCI edits before installation.'
 done
