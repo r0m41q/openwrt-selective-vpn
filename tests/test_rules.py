@@ -448,6 +448,10 @@ class RuleLifecycleTests(unittest.TestCase):
         self.assertNotIn(
             "svpn_route_phone", (life.f.config / "pbr").read_text()
         )
-        restored = life.call("rollback", "192.168.8.2").stdout.decode().strip()
+        restored = (
+            life.call("rollback", "192.168.8.2", extra=lifecycle.TRACE)
+            .stdout.decode()
+            .strip()
+        )
         life.call("confirm", restored)
         self.assertIn("svpn_route_phone", (life.f.config / "pbr").read_text())

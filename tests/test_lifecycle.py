@@ -12,6 +12,14 @@ import test_network as network
 import test_transaction as recovery
 
 
+# TRACE turns on shell tracing for a call, failures show only the end of it
+TRACE = "set -x\n"
+
+
+def tail(result, lines=80):
+    return "\n".join(result.stderr.decode().splitlines()[-lines:])
+
+
 class LifecycleTests(unittest.TestCase):
     def setUp(self):
         self.n = network.NetworkTests(methodName="runTest")
@@ -154,7 +162,7 @@ ice {name} "$@"\n',
             except FileNotFoundError:
                 pass
         if check:
-            self.assertEqual(result.returncode, 0, result.stderr.decode())
+            self.assertEqual(result.returncode, 0, tail(result))
         return result
 
     def stop_watchers(self):
@@ -301,7 +309,7 @@ ice {name} "$@"\n',
         self.assertEqual(
             [
                 line
-                for line in calls.read_text()[len(before) :].splitlines()
+                for line in calls.read_text()[len(before):].splitlines()
                 if line.startswith("openvpn ")
             ],
             [],
@@ -597,7 +605,7 @@ n/pbr.dnsmasq'\n\tlist addnmount '/etc/hosts'\nconfig host\n\tlist addnmount \
             set((self.f.store / "transactions").iterdir()), transactions
         )
         self.assertNotIn(
-            "reload", (self.root / "calls").read_text()[len(before) :]
+            "reload", (self.root / "calls").read_text()[len(before):]
         )
 
     def test_domain_apply_and_rollback_use_native_mount_cleanup(self):

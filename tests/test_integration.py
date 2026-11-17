@@ -61,11 +61,13 @@ class IntegrationTests(unittest.TestCase):
         case.n.live[0]["ipv4-address"][0]["address"] = "192.168.9.1"
         case.n.save_live()
         for _ in range(3):
-            result = case.call("event", check=False)
+            result = case.call(
+                "event", check=False, extra=test_lifecycle.TRACE
+            )
             if result.returncode == 0 or (case.f.store / "pending").exists():
                 break
             time.sleep(1)
-        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertEqual(result.returncode, 0, test_lifecycle.tail(result))
         event = result.stdout.decode().strip()
         self.assertIn("192.168.9.0/24", pbr.read_text())
         self.assertEqual((case.f.store / "pending").read_text().strip(), event)
