@@ -70,7 +70,7 @@ replace_file() (
 apk_run() {
 	if [ -s "$work/keys/selective-vpn.pem" ]; then set -- --keys-dir "$work/keys" "$@"; fi
 	apk --check-certificate --no-interactive \
-		--no-progress --no-logfile --timeout 30 --cache-dir "$work/cache" "$@"
+		--no-progress --no-logfile --timeout 30 --cache-dir "$apk_cache" "$@"
 }
 
 manifest() {
@@ -165,9 +165,30 @@ cache_previous() {
 			previous="$work/old/$1-$2.apk"
 			download "$previous" "$release_url/download/v$2/$1-$2.apk" || die 'Cannot download the previous release for recovery.'
 			check_package "$previous" "$1" "$2" noarch ;;
-		*) apk_run fetch --output "$work/old" "$1=$2" > /dev/null ||
-			die 'Cannot cache the previous package. Keep the current installation until its signed APK is available.' ;;
+		*)
+			# the feed keeps only its newest build, so recovery restores that one
+			apk_run cache download --upgrade "$1" > /dev/null || die 'Cannot download the previous package for recovery.'
+			restored=''
+			for file in "$work/cache/$1-"*.apk; do
+				[ -f "$file" ] || continue
+				apk_run adbdump --format json "$file" > "$work/metadata" || die 'Cannot read APK metadata.'
+				[ "$(jsonfilter -i "$work/metadata" -e '@.info.name')" = "$1" ] || continue
+				[ -z "$restored" ] || die 'Several builds of the previous package were downloaded.'
+				restored=$(jsonfilter -i "$work/metadata" -e '@.info.version') || die 'Package version is missing.'
+				cp "$file" "$work/restore-cache/" || die 'Cannot keep the previous package for recovery.'
+			done
+			[ -n "$restored" ] || die 'Cannot download the previous package for recovery.'
+			printf '%s %s\n' "$1" "$restored" >> "$work/restore" ;;
 	esac
+}
+
+# print the one downloaded file of a planned package
+planned_file() {
+	case "$1" in
+		selective-vpn|luci-app-selective-vpn) set -- "$work/new/$1-$2.apk" ;;
+		*) set -- "$work/cache/$1-$2".*.apk ;;
+	esac
+	[ "$#" -eq 1 ] && [ -f "$1" ] && printf '%s\n' "$1"
 }
 
 lock_backend() {
@@ -193,12 +214,14 @@ check_package() {
 }
 
 parse_plan() {
-	awk '/^\([0-9]+\/[0-9]+\) / {
-		if ($2 !~ /^(Installing|Purging|Upgrading|Replacing)$/ || $3 !~ /^[a-zA-Z0-9][a-zA-Z0-9+_.-]*$/) exit 1
-		name = $3
-		if ($2 != "Installing" && name !~ /^(selective-vpn|luci-app-selective-vpn|dnsmasq|dnsmasq-dhcpv6)$/) exit 1
-		if ($2 == "Purging") { print name, "-"; next }
-		v = $NF; gsub(/[()]/, "", v)
+	# apk pads the step number, as in "( 1/12) Installing pbr (1.2.2-r20)"
+	awk '/^\( *[0-9]+\/[0-9]+\) / {
+		line = $0; sub(/^\( */, "(", line); n = split(line, f, " ")
+		if (f[2] !~ /^(Installing|Purging|Upgrading|Replacing)$/ || f[3] !~ /^[a-zA-Z0-9][a-zA-Z0-9+_.-]*$/) exit 1
+		name = f[3]
+		if (f[2] != "Installing" && name !~ /^(selective-vpn|luci-app-selective-vpn|dnsmasq|dnsmasq-dhcpv6)$/) exit 1
+		if (f[2] == "Purging") { print name, "-"; next }
+		v = f[n]; gsub(/[()]/, "", v)
 		if (v !~ /^[a-zA-Z0-9][a-zA-Z0-9+_.~-]*$/) exit 1
 		if (name == "pbr" && v !~ /^1\.2\.2-r[0-9]+$/) exit 1
 		print name, v
@@ -207,7 +230,12 @@ parse_plan() {
 
 dns_probe() {
 	# query the local resolver explicitly; the system resolver may point elsewhere
-	nslookup downloads.openwrt.org 127.0.0.1 > /dev/null 2>&1
+	# dnsmasq needs a moment after a restart
+	for attempt in 1 2 3 4 5 6 7 8 9 10; do
+		nslookup downloads.openwrt.org 127.0.0.1 > /dev/null 2>&1 && return 0
+		[ "$attempt" -eq 10 ] || sleep 1
+	done
+	return 1
 }
 
 dns_features() {
@@ -334,7 +362,11 @@ recovery() {
 	printf '%s\n' 'Restoring the previous application and DNS packages.' >&2
 	safe_directory "$backup" && [ "$(stat -c '%a' "$backup")" = 700 ] || return 1
 	[ -f "$backup/armed" ] || return 1
-	for name in before allowed targets world; do safe_file "$backup/$name" || return 1; done
+	for name in before allowed targets world restore; do safe_file "$backup/$name" || return 1; done
+	if [ -d "$backup/cache" ]; then
+		safe_directory "$backup/cache" || return 1
+		apk_cache=$backup/cache
+	fi
 	# unknown edits after an interrupted APK script require manual review
 	if [ -d "$backup/after-config" ]; then
 		same_snapshot "$backup/after-config" || same_snapshot "$backup/before-config" || return 1
@@ -366,6 +398,14 @@ recovery() {
 		case "$name" in selective-vpn|luci-app-selective-vpn|dnsmasq|dnsmasq-dhcpv6|dnsmasq-full) continue ;; esac
 		set -- "$@" "$name=$old_version"
 	done < "$backup/before"
+	while read -r name restored; do
+		set -- "$@" "$name=$restored"
+	done < "$backup/restore"
+	# dnsmasq-full also provides dnsmasq, so variants that were not installed must go
+	for name in dnsmasq dnsmasq-dhcpv6 dnsmasq-full; do
+		awk -v name="$name" '$1 == name { found = 1 } END { exit !found }' "$backup/before" ||
+			set -- "$@" "!$name"
+	done
 	# the original world removes the new package constraints before solving recovery
 	cp -p "$world" "$work/failed-world" || return 1
 	replace_file "$backup/world" "$world" || return 1
@@ -382,10 +422,13 @@ recovery() {
 	manifest > "$work/restored" || return 1
 	# dependencies installed along the way may remain, but original packages must match
 	awk 'FILENAME == ARGV[1] { old[$1] = $2; next }
+		FILENAME == ARGV[2] { if ($1 in old) old[$1] = $2; next }
 		{ if ($1 in old && old[$1] == $2) delete old[$1] }
-		END { for (n in old) exit 1 }' "$backup/before" "$work/restored" || return 1
+		END { for (n in old) exit 1 }' "$backup/before" "$backup/restore" "$work/restored" || return 1
 	cp -p "$work/restored" "$backup/installed" || return 1
 	rm -f "$backup/armed"
+	# the package index copy is only needed while recovery is pending
+	rm -rf "$backup/cache"
 	sync
 	printf '%s\n' 'Previous packages and configuration restored.' >&2
 }
@@ -461,7 +504,9 @@ safe_directory /etc && safe_directory "$config" && safe_directory /etc/apk &&
 work=$(mktemp -d "$temporary/selective-vpn-install.XXXXXXXX") || die 'Cannot create private staging.'
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
-mkdir "$work/cache" "$work/new" "$work/old" "$work/keys"
+mkdir "$work/cache" "$work/new" "$work/old" "$work/keys" "$work/restore-cache"
+: > "$work/restore"
+apk_cache=$work/cache
 if ! mkdir "$temporary/selective-vpn-install.lock" 2>/dev/null; then
 	safe_directory "$temporary/selective-vpn-install.lock" &&
 		safe_file "$temporary/selective-vpn-install.lock/pid" || die 'Unsafe installer lock.'
@@ -528,32 +573,45 @@ if [ "$dns_change" -eq 1 ]; then
 	set -- "$@" dnsmasq-full
 	printf '%s\n' dnsmasq-full >> "$work/targets"
 fi
+for argument; do printf '%s\n' "$argument"; done > "$work/request"
 apk_run add --simulate "$@" > "$work/plan" 2>&1 || die 'APK cannot install these packages without conflicts.'
 parse_plan "$work/plan" > "$work/allowed" || die 'Installation would change an unrelated package, downgrade a package, or install an unsupported PBR version.'
+# feed packages are trusted through the signed index, so they stay in the apk cache
+set --
 while read -r name new_version; do
-	[ "$new_version" != - ] || continue
-	[ ! -f "$work/new/$name-$new_version.apk" ] || continue
-	apk_run fetch --output "$work/new" "$name=$new_version" > /dev/null || die 'Cannot cache an installation package.'
+	case "$name" in selective-vpn|luci-app-selective-vpn) continue ;; esac
+	[ "$new_version" = - ] || set -- "$@" "$name"
 done < "$work/allowed"
+if [ "$#" -gt 0 ]; then
+	apk_run cache download "$@" > /dev/null || die 'Cannot download the installation packages.'
+fi
 awk '$2 != "-" { print $1 }' "$work/allowed" >> "$work/targets"
 while read -r name new_version; do
 	old_version=$(installed_version "$name")
 	[ -n "$old_version" ] || continue
 	cache_previous "$name" "$old_version"
 done < "$work/allowed"
+if [ -s "$work/restore" ]; then
+	cp "$work/cache/"APKINDEX.* "$work/restore-cache/" || die 'Cannot keep the package index for recovery.'
+fi
 required_kib=8192
-for file in "$work/new"/*.apk "$work/old"/*.apk; do
-	[ -f "$file" ] || continue
-	apk_run verify "$file" > /dev/null || die 'A cached package failed signature verification.'
+while read -r name new_version; do
+	[ "$new_version" != - ] || continue
+	file=$(planned_file "$name" "$new_version") || die 'A planned package was not downloaded.'
 	apk_run adbdump --format json "$file" > "$work/metadata" || die 'Cannot read cached package metadata.'
+	[ "$(jsonfilter -i "$work/metadata" -e '@.info.name')" = "$name" ] &&
+		[ "$(jsonfilter -i "$work/metadata" -e '@.info.version')" = "$new_version" ] ||
+		die 'A downloaded package does not match the plan.'
 	package_arch=$(jsonfilter -i "$work/metadata" -e '@.info.arch') || die 'Package architecture is missing.'
-	[ "$package_arch" = noarch ] || [ "$package_arch" = "$architecture" ] || die 'Cached package architecture does not match.'
+	[ "$package_arch" = noarch ] || [ "$package_arch" = "$architecture" ] ||
+		die 'Cached package architecture does not match.'
 	bytes=$(jsonfilter -i "$work/metadata" -e '@.info["installed-size"]') || die 'Package size is missing.'
 	case "$bytes" in ''|*[!0-9]*|??????????*) die 'Invalid package size.' ;; esac
 	required_kib=$((required_kib + (bytes + 1023) / 1024))
-done
-cache_kib=$(du -sk "$work" | awk '{ print $1 }')
-required_kib=$((required_kib + cache_kib))
+done < "$work/allowed"
+# recovery copies are kept in flash
+backup_kib=$(du -sk "$work/old" "$work/restore-cache" | awk '{ n += $1 } END { print n }')
+required_kib=$((required_kib + backup_kib))
 space / "$required_kib" || die 'Insufficient flash for installation and recovery packages.'
 
 printf '\nSelective VPN %s for OpenWrt %s, architecture %s, LuCI %s\n' "$version" "$firmware" "$architecture" "$luci"
@@ -573,8 +631,9 @@ cmp -s "$work/before" "$work/current" && cmp -s "$work/world" "$world" &&
 for name in $saved_files; do
 	[ -z "$(uci -q changes "$name")" ] || die 'Pending UCI edits appeared during preparation.'
 done
-# install only cached files, so DNS and repository changes cannot alter the proposal
-set -- "$work/new/"*.apk
+# install offline from the cached index, so DNS and repository changes cannot alter the proposal
+set --
+while read -r argument; do set -- "$@" "$argument"; done < "$work/request"
 apk_run --no-network add --simulate "$@" > "$work/final-plan" 2>&1 || die 'Cached packages no longer satisfy the installation.'
 parse_plan "$work/final-plan" > "$work/final-allowed" || die 'The cached package proposal is unsafe.'
 sort "$work/allowed" > "$work/expected"
@@ -583,7 +642,8 @@ cmp -s "$work/expected" "$work/proposed" || die 'The cached package proposal cha
 [ ! -d "$backup" ] || rm -rf "$backup"
 mkdir -m 700 "$backup"
 cp -pR "$work/before-config" "$work/old" "$backup/"
-cp -p "$work/before" "$work/world" "$work/allowed" "$work/targets" "$backup/"
+[ ! -s "$work/restore" ] || cp -pR "$work/restore-cache" "$backup/cache"
+cp -p "$work/before" "$work/world" "$work/allowed" "$work/targets" "$work/restore" "$backup/"
 if [ -f "$work/first-installed" ]; then
 	cp -p "$work/first-installed" "$backup/first-installed"
 else
@@ -623,6 +683,7 @@ if [ "$with_luci" -eq 1 ]; then
 fi
 cp -p "$work/after" "$backup/installed"
 rm "$backup/armed"
+rm -rf "$backup/cache"
 sync
 armed=0
 printf '%s\n' "Selective VPN $version is installed. Routing stays off until you set it up."

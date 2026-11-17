@@ -31,7 +31,7 @@ Automatic preparation supports one running dnsmasq instance that owns the local 
 
 ## Recovery
 
-Backups and package history are kept in `/etc/selective-vpn-install`, readable only by root. If installation fails, the installer tries to restore the previous packages, configuration and APK world. Newly installed dependencies may remain.
+Backups and package history are kept in `/etc/selective-vpn-install`, readable only by root. If installation fails, the installer tries to restore the previous packages, configuration and APK world. Newly installed dependencies may remain. If dnsmasq was replaced, it comes back at the newest version in the package feed.
 
 After an interrupted installation, run `sh /tmp/install.sh --recover`. Conflicting edits stop automatic recovery and leave the backups for review. Keep a router backup anyway.
 

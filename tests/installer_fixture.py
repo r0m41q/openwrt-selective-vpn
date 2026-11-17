@@ -60,6 +60,18 @@ def emit(value):
     print(json.dumps(value))
 
 
+# newest builds in the feed; the router image may carry older ones
+FEED = {
+    "dnsmasq": "2.93-r3",
+    "dnsmasq-full": "2.93-r2",
+    "pbr": "1.2.2-r20",
+    "luci": "25.12-r1",
+    "luci-base": "25.12-r1",
+    "curl": "25.12-r1",
+    "ca-bundle": "25.12-r1",
+}
+
+
 def dns_service():
     return {"dnsmasq": {"instances": {"main": {"running": True, "pid": 42}}}}
 
@@ -86,10 +98,10 @@ def solve(arguments):
         constraints = (root / "etc/apk/world").read_text().splitlines()
         names = {re.split(r"[=@~<>]", value)[0] for value in constraints}
         for name in list(after):
+            # dnsmasq-full stays while it provides dnsmasq
             if name not in names and name in {
                 "selective-vpn",
                 "luci-app-selective-vpn",
-                "dnsmasq-full",
             }:
                 del after[name]
         for arg in arguments:
@@ -101,8 +113,13 @@ def solve(arguments):
     if "dnsmasq-full" in requested:
         after.pop("dnsmasq", None)
         after.pop("dnsmasq-dhcpv6", None)
-    if "dnsmasq" in requested or "dnsmasq-dhcpv6" in requested:
-        after.pop("dnsmasq-full", None)
+    # dnsmasq-full provides dnsmasq, so only a conflict replaces it
+    for name in ("dnsmasq", "dnsmasq-dhcpv6", "dnsmasq-full"):
+        if "!" + name in arguments:
+            after.pop(name, None)
+            requested.pop(name, None)
+    if "dnsmasq-full" in after:
+        requested.pop("dnsmasq", None)
     after.update(requested)
     if flag("unrelated-upgrade") and not recovery:
         after["uci"] = "2-r1"
@@ -118,8 +135,11 @@ def solve(arguments):
         else:
             action, versions = "Upgrading", f"{old} -> {new}"
         actions.append((action, name, versions))
+    # real apk pads the step number, as in "( 1/12)"
+    width = len(str(len(actions)))
     for index, (action, name, versions) in enumerate(actions, 1):
-        print(f"({index}/{len(actions)}) {action} {name} ({versions})")
+        step = f"({index:>{width}}/{len(actions)})"
+        print(f"{step} {action} {name} ({versions})")
     print("OK: 20 MiB in 20 packages")
     return after, recovery, requested
 
@@ -137,7 +157,7 @@ if command == "apk":
     operation_index = next(
         i
         for i, arg in enumerate(args)
-        if arg in {"list", "update", "verify", "adbdump", "fetch", "add"}
+        if arg in {"list", "update", "verify", "adbdump", "cache", "add"}
     )
     operation = args[operation_index]
     start = operation_index + 1
@@ -147,10 +167,15 @@ if command == "apk":
         for name, version in sorted(load().items()):
             print(name, version)
     elif operation == "update":
-        sys.exit(1 if flag("bad-repositories") else 0)
+        if flag("bad-repositories"):
+            sys.exit(1)
+        cache = Path(args[args.index("--cache-dir") + 1])
+        (cache / "APKINDEX.0123abcd.tar.gz").write_text("index\n")
     elif operation == "verify":
         assert "--no-allow-untrusted" not in args
         assert "--check-certificate" in args
+        # feed packages are unsigned; only the signed index trusts them
+        assert "/cache/" not in params[-1]
         if "selective-vpn-" in Path(params[-1]).name:
             keys = Path(args[args.index("--keys-dir") + 1])
             assert (keys / "selective-vpn.pem").read_text() == KEY
@@ -160,12 +185,21 @@ if command == "apk":
         if flag("huge-package"):
             data["info"]["installed-size"] = 100_000_000
         emit(data)
-    elif operation == "fetch":
-        name, version = params[-1].split("=", 1)
-        if flag("missing-old") and "/old" in params[1]:
+    elif operation == "cache":
+        assert params[0] == "download"
+        names = params[1:]
+        # an installed package is only fetched with --upgrade
+        if names[0] == "--upgrade":
+            names = names[1:]
+        else:
+            assert not set(names) & set(load())
+        if flag("missing-old") and names == ["dnsmasq"]:
             sys.exit(1)
-        path = Path(params[1]) / f"{name}-{version}.apk"
-        path.write_text(json.dumps(package(name, version)))
+        cache = Path(args[args.index("--cache-dir") + 1])
+        for name in names:
+            version = FEED.get(name, "1-r1")
+            path = cache / f"{name}-{version}.89abcdef.apk"
+            path.write_text(json.dumps(package(name, version)))
     elif operation == "add":
         if flag("solver-failure"):
             sys.exit(1)
@@ -264,6 +298,8 @@ elif command == "dnsmasq":
     if flag("bad-full-features"):
         feature = "no-nftset"
     print(f"Dnsmasq version 2.93\nCompile time options: IPv6 {feature}")
+elif command == "sleep":
+    pass
 elif command == "nslookup":
     record("dns-probe")
     if flag("interrupt-check") and "dnsmasq-full" in load():

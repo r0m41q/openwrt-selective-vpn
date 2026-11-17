@@ -70,6 +70,7 @@ class InstallerTests(unittest.TestCase):
             "ubus",
             "uci",
             "dnsmasq",
+            "sleep",
             "nslookup",
             "df",
             "stat",
@@ -416,9 +417,13 @@ class InstallerTests(unittest.TestCase):
                 packages = json.loads(
                     (self.root / "packages.json").read_text()
                 )
-                for package_name, version in self.packages.items():
+                # the feed keeps only its newest dnsmasq build
+                expected = dict(self.packages, dnsmasq="2.93-r3")
+                for package_name, version in expected.items():
                     self.assertEqual(packages[package_name], version)
                 self.assertNotIn("selective-vpn", packages)
+                self.packages = packages
+                self.save_packages()
                 self.assertEqual(
                     (self.root / "etc/apk/world").read_text(), "dnsmasq\nuci\n"
                 )
