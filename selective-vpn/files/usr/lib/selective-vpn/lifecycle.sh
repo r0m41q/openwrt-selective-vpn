@@ -486,6 +486,11 @@ svpn_life_remove() (
 			printf "\toption enabled '0'\n" >> "$work/inactive"
 			svpn_life_want "$work" section selective-vpn.svpn_active present < "$work/inactive" || exit 1
 		fi
+		# enable rebuilds routing from the confirmed rule snapshot
+		for section in $(awk -F '\t' '$1 == "S" && $3 == "active_rule" && $4 ~ /^svpn_rule_[a-zA-Z0-9_]+$/ { print $4 }' "$work/app.table"); do
+			svpn_uci_record "selective-vpn.$section" read "$work/app.export" > "$work/rule" &&
+				svpn_life_want "$work" section "selective-vpn.$section" present < "$work/rule" || exit 1
+		done
 		printf "\toption enabled '0'\n" | svpn_life_want "$work" option selective-vpn.main.enabled present || exit 1
 	fi
 	svpn_life_obsolete "$work" "$mode" || exit 1
