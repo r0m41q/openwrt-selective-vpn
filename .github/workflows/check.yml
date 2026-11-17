@@ -2,6 +2,9 @@ name: Check
 
 on:
   push:
+    # tag pushes only run the release; the branch push checks the same commit
+    branches:
+      - '**'
   pull_request:
   workflow_dispatch:
 
