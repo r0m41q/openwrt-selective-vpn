@@ -16,9 +16,13 @@ const labels = {
 	runtime_recovery: _('Service recovery needed'), conflict: _('Configuration conflict'), rolled_back: _('Rolled back'),
 	available: _('Available'), summarized: _('Summarized'), not_requested: _('Not requested')
 };
-const names = { console: _('Console'), browser: _('Browser'), custom: _('Custom') };
+
+function policyName(name) {
+	const parts = name.split('__');
+	return (parts[0] === 'global' ? _('Global') : parts[0]) + (parts[1] ? ' (' + parts[1] + ')' : '');
+}
 const actions = {
-	enable: { title: _('Enable saved routing'), help: _('Reapply the saved VPN, LAN scope and authentication destinations. Review changes on the Routing page when changing settings.') },
+	enable: { title: _('Enable saved routing'), help: _('Reapply the saved VPN, LAN networks and rules. Review changes on the Routing page when changing settings.') },
 	reconnect: { title: _('Restart managed VPN'), help: _('Restart only the active managed VPN, then reapply saved routing. Existing external VPN clients are managed on their own configuration page.') },
 	reload: { title: _('Reload PBR'), help: _('Reapply saved routing and reload the shared PBR service. Other policies keep their configured priority. The VPN is checked and started if needed.') },
 	disable: { title: _('Disable routing'), help: _('Remove managed policies and forwarding, and stop the managed VPN. Saved selections and private profiles remain. External VPN clients stay running.') },
@@ -130,8 +134,7 @@ return view.extend({
 			[_('Tunnel'), display(data.vpn.tunnel)], [_('VPN process'), display(data.vpn.process)],
 			[_('Tunnel interface'), this.detail.interface || _('Unknown')],
 			[_('Tunnel IPv4 addresses'), this.detail.addresses.join(', ') || _('Unknown')],
-			[_('Console enabled in saved settings'), display(data.configuration.console)],
-			[_('Browser enabled in saved settings'), display(data.configuration.browser)],
+			[_('Applied rules'), display(data.configuration.rules)],
 			[_('Exit IP and country'), _('Not checked')]
 		];
 		rows.push(
@@ -144,8 +147,8 @@ return view.extend({
 			[_('Policy rule evidence'), display(data.evidence.policy_rules)],
 			[_('Policy match evidence'), display(data.evidence.policy_matches)]
 		);
-		for (const name of ['console', 'browser', 'custom'])
-			rows.push([names[name] + _(' rule / packets / bytes'),
+		for (const name of Object.keys(data.policies))
+			rows.push([policyName(name) + _(' rule / packets / bytes'),
 				display(data.policies[name]) + ' / ' + display(data.packets[name]) + ' / ' + display(data.bytes[name])]);
 		this.statusArea.replaceChildren(table(rows));
 		const warnings = [];
@@ -159,15 +162,16 @@ return view.extend({
 			warnings.push(_('Routing prerequisites are missing or unverified. Check VPN, PBR, routes and diagnostics.'));
 		if (data.configuration.enabled === true && !['ready', 'not_required'].includes(data.dns.integration)) warnings.push(_('Domain routing is not ready. Check router DNS and dnsmasq nftset support.'));
 		if (data.configuration.enabled === true && data.recovery.supervisor !== 'running') warnings.push(_('The recovery supervisor is not confirmed running. Check it over SSH before network changes.'));
-		if (data.configuration.static_fallback === true) warnings.push(_('Static console addresses may be outdated.'));
 		this.warnings.replaceChildren(...warnings.map(text => E('p', { 'class': 'alert-message warning' }, [text])));
 		if (!this.diagnostic) {
-			const policies = this.detail.policies.filter(policy => policy.sources.length && policy.destinations.length);
+			const policies = this.detail.policies;
 			const domains = new Set(policies.flatMap(policy => policy.destinations).filter(value => /[a-z]/.test(value)));
 			this.scopeArea.replaceChildren(
-				E('p', {}, [_('Configured authentication domains: ') + (data.pbr.policy_configuration === 'match' ? domains.size : _('Unknown'))]),
-				...policies.map(policy => E('p', {}, [names[policy.name] + ': ' + policy.sources.join(', ') + ' → ' + policy.destinations.join(', ')])),
-				E('p', {}, [_('These are saved IPv4 TCP/443 policy sources and destinations. Rule evidence above shows whether the matching managed rules were observed; domain counts do not show successful DNS resolution.')])
+				E('p', {}, [_('Configured routed domains: ') + (data.pbr.policy_configuration === 'match' ? domains.size : _('Unknown'))]),
+				...policies.map(policy => E('p', {}, [policyName(policy.name) + ': ' + policy.sources.join(', ') + ' → ' +
+					policy.destinations.join(', ') + ' (' + policy.protocols.join('/').toUpperCase() +
+					(policy.ports.length ? ' ' + policy.ports.join(', ') : '') + ')'])),
+				E('p', {}, [_('These are the saved IPv4 routes for each rule. Rule evidence above shows whether the matching managed rules were observed; domain counts do not show successful DNS resolution.')])
 			);
 		}
 		else this.scopeArea.replaceChildren(table(Object.keys(data.dependencies).map(name => [name, display(data.dependencies[name])])));

@@ -34,7 +34,7 @@ function consume(text,    i, ch, quote, escaped, token, started, n, a, key, valu
 	else if (package == "openvpn") keep = key ~ /^(config|dev|dev_type|enabled|enable|up|down|route_up|route_pre_down|ipchange|script_security)$/
 	else if (package == "dhcp") keep = key ~ /^(name|ip|leasename|leasefile|port|interface|notinterface|listen_address|dhcp_option|dhcp_option_force|ignore|disabled)$/
 	else if (package == "pbr") keep = key ~ /^(enabled|resolver_set|resolver_instance|supported_interface|ignored_interface|ipv6_enabled|netifd_enabled|name|interface|chain|proto|src_addr|src_port|dest_addr|dest_port|dest_dns)$/
-	else if (package == "selective-vpn") keep = key ~ /^(enabled|mode|selection|networks|devices|console|browser|fallback|custom|ipv6_acknowledged|rules|address|proto|dest_port|destinations|preset)$/
+	else if (package == "selective-vpn") keep = key ~ /^(enabled|mode|selection|networks|ipv6_acknowledged|address|proto|dest_port|destinations|preset)$/
 	else fail()
 	if (!keep) return
 	value = a[3]

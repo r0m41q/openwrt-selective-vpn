@@ -12,6 +12,8 @@ import test_network as network
 import test_transaction as recovery
 
 
+POLICY = "svpn_route_global__xcloud_native_static"
+
 # TRACE turns on shell tracing for a call, failures show only the end of it
 TRACE = "set -x\n"
 
@@ -30,11 +32,7 @@ class LifecycleTests(unittest.TestCase):
         self.addCleanup(self.stop_watchers)
         self.root = self.f.root
         self.write = self.f.write
-        self.write(
-            self.f.config / "selective-vpn",
-            "config settings 'main'\n option enabled '0'\n",
-            0o644,
-        )
+        self.rules("xcloud_native_static")
         for key, value in {
             "version": "pbr 1.2.2-r20\n",
             "routes4": (
@@ -173,16 +171,21 @@ ice {name} "$@"\n',
                 pass
         time.sleep(0.1)
 
+    # a Global rule with one preset; the static one needs no DNS integration
+    def rules(self, preset):
+        self.write(
+            self.f.config / "selective-vpn",
+            "config settings 'main'\n option enabled '0'\n"
+            "config rule 'global'\n option proto 'tcp udp'\n"
+            f" list preset '{preset}'\n",
+            0o644,
+        )
+
     def apply(self, **options):
         return self.call(
             "apply",
             "managed",
             "profile.ABC12345",
-            "",
-            "",
-            "1",
-            "0",
-            "1",
             "",
             "1",
             "192.168.8.2",
@@ -197,7 +200,7 @@ ice {name} "$@"\n',
 
     def test_apply_confirm_disable_enable_and_uninstall(self):
         identifier = self.activate()
-        self.assertIn("svpn_console", (self.f.config / "pbr").read_text())
+        self.assertIn(POLICY, (self.f.config / "pbr").read_text())
         self.assertEqual(
             (self.f.store / "confirmed").read_text().strip(), identifier
         )
@@ -205,7 +208,7 @@ ice {name} "$@"\n',
             self.call("disable", "192.168.8.2").stdout.decode().strip()
         )
         self.call("confirm", identifier)
-        self.assertNotIn("svpn_console", (self.f.config / "pbr").read_text())
+        self.assertNotIn(POLICY, (self.f.config / "pbr").read_text())
         self.assertFalse((self.root / "vpn-running").exists())
         identifier = self.call("enable", "192.168.8.2").stdout.decode().strip()
         self.call("confirm", identifier)
@@ -249,11 +252,6 @@ ice {name} "$@"\n',
                 "apply",
                 "external",
                 "personal",
-                "",
-                "",
-                "1",
-                "0",
-                "1",
                 "",
                 "1",
                 "192.168.8.2",
@@ -306,10 +304,11 @@ ice {name} "$@"\n',
         self.assertNotEqual(
             self.call("reconnect", "192.168.8.2", check=False).returncode, 0
         )
+        start = len(before)
         self.assertEqual(
             [
                 line
-                for line in calls.read_text()[len(before):].splitlines()
+                for line in calls.read_text()[start:].splitlines()
                 if line.startswith("openvpn ")
             ],
             [],
@@ -408,7 +407,7 @@ ice {name} "$@"\n',
         (self.root / "fail-pbr-reload").touch()
         result = self.apply(check=False)
         self.assertNotEqual(result.returncode, 0)
-        self.assertNotIn("svpn_console", (self.f.config / "pbr").read_text())
+        self.assertNotIn(POLICY, (self.f.config / "pbr").read_text())
         self.assertFalse(
             (self.f.store / "pending").exists(), result.stderr.decode()
         )
@@ -424,7 +423,7 @@ ice {name} "$@"\n',
         (self.root / "no-address").touch()
         self.assertNotEqual(self.apply(check=False).returncode, 0)
         self.assertFalse((self.f.store / "pending").exists())
-        self.assertNotIn("svpn_console", (self.f.config / "pbr").read_text())
+        self.assertNotIn(POLICY, (self.f.config / "pbr").read_text())
 
     def test_boot_recovers_when_the_detached_watchdog_is_lost(self):
         identifier = self.apply().stdout.decode().strip()
@@ -437,16 +436,12 @@ ice {name} "$@"\n',
     def test_new_boot_restores_configs_and_mount_without_services(
         self,
     ):
+        self.rules("xcloud_native")
         identifier = (
             self.call(
                 "apply",
                 "managed",
                 "profile.ABC12345",
-                "",
-                "",
-                "1",
-                "0",
-                "0",
                 "",
                 "1",
                 "192.168.8.2",
@@ -464,7 +459,7 @@ ice {name} "$@"\n',
         self.call("boot")
         self.assertEqual((self.root / "calls").read_bytes(), before)
         self.assertFalse((self.f.store / "pending").exists())
-        self.assertNotIn("svpn_console", (self.f.config / "pbr").read_text())
+        self.assertNotIn("svpn_route_", (self.f.config / "pbr").read_text())
         self.assertNotIn("/var/run/pbr.dnsmasq", path.read_text())
         self.assertIn("name 'later'", path.read_text())
         self.assertEqual(path.stat().st_mode & 0o777, 0o644)
@@ -512,7 +507,7 @@ ion interface 'wan'\n option dest_addr '198.51.100.20'\n"
         self.call("confirm", identifier)
         self.assertIn("policy 'personal'", path.read_text())
         self.assertIn("option enabled '1'", path.read_text())
-        self.assertNotIn("svpn_console", path.read_text())
+        self.assertNotIn(POLICY, path.read_text())
         self.assertTrue((self.root / "pbr-running").exists())
 
     def test_timeout_reloads_services_after_configuration_rollback(self):
@@ -588,7 +583,7 @@ n/pbr.dnsmasq'\n\tlist addnmount '/etc/hosts'\nconfig host\n\tlist addnmount \
             self.call("rollback", "192.168.8.2").stdout.decode().strip()
         )
         self.call("confirm", identifier)
-        self.assertIn("svpn_console", (self.f.config / "pbr").read_text())
+        self.assertIn(POLICY, (self.f.config / "pbr").read_text())
         self.assertTrue((self.root / "vpn-running").exists())
 
     def test_duplicate_events_do_not_reload_services(self):
@@ -604,21 +599,16 @@ n/pbr.dnsmasq'\n\tlist addnmount '/etc/hosts'\nconfig host\n\tlist addnmount \
         self.assertEqual(
             set((self.f.store / "transactions").iterdir()), transactions
         )
-        self.assertNotIn(
-            "reload", (self.root / "calls").read_text()[len(before):]
-        )
+        start = len(before)
+        self.assertNotIn("reload", (self.root / "calls").read_text()[start:])
 
     def test_domain_apply_and_rollback_use_native_mount_cleanup(self):
+        self.rules("xcloud_native")
         identifier = (
             self.call(
                 "apply",
                 "managed",
                 "profile.ABC12345",
-                "",
-                "",
-                "1",
-                "0",
-                "0",
                 "",
                 "1",
                 "192.168.8.2",
@@ -639,16 +629,12 @@ n/pbr.dnsmasq'\n\tlist addnmount '/etc/hosts'\nconfig host\n\tlist addnmount \
         )
 
     def test_domain_policy_without_native_snippet_is_recovered(self):
+        self.rules("xcloud_native")
         (self.root / "no-snippet").touch()
         result = self.call(
             "apply",
             "managed",
             "profile.ABC12345",
-            "",
-            "",
-            "1",
-            "0",
-            "0",
             "",
             "1",
             "192.168.8.2",
@@ -733,11 +719,6 @@ started"; sleep 30; fi\n'
                     "managed",
                     "profile.ABC12345",
                     "",
-                    "",
-                    "1",
-                    "0",
-                    "1",
-                    "",
                     "1",
                     "192.168.8.2",
                 ],
@@ -767,9 +748,7 @@ started"; sleep 30; fi\n'
                 time.sleep(0.1)
             self.assertFalse((self.f.store / "pending").exists())
             self.assertFalse((self.root / "vpn-running").exists())
-            self.assertNotIn(
-                "svpn_console", (self.f.config / "pbr").read_text()
-            )
+            self.assertNotIn(POLICY, (self.f.config / "pbr").read_text())
 
     def test_route_gate_rejects_unsafe_routes(
         self,

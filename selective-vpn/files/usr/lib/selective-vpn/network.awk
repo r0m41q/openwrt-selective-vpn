@@ -7,13 +7,6 @@ function ip(value,    a, n, i) {
 	for (i = 1; i <= 4; i++) if (a[i] !~ /^(0|[1-9][0-9]*)$/ || a[i] + 0 > 255) return -1
 	return ((a[1] * 256 + a[2]) * 256 + a[3]) * 256 + a[4]
 }
-function host(value,    a, n, i) {
-	if (length(value) > 253 || value !~ /^[a-zA-Z0-9.-]+$/) return 0
-	n = split(value, a, ".")
-	if (a[n] !~ /[a-zA-Z]/) return 0
-	for (i = 1; i <= n; i++) if (length(a[i]) < 1 || length(a[i]) > 63 || a[i] ~ /^-|-$/) return 0
-	return 1
-}
 function power(bits,    value) { value = 1; while (bits-- > 0) value *= 2; return value }
 function dotted(value,    d, c, b, a) {
 	d = value % 256; value = int(value / 256)
@@ -63,28 +56,6 @@ function zone_for(net,    s, z, found) {
 	}
 	return found
 }
-function selected_address(value,    i, n) {
-	n = ip(value)
-	if (n < 0) return 0
-	for (i = 1; i <= addresses; i++) if (n == addr[i]) return 0
-	for (i = 1; i <= addresses; i++) {
-		if (selected[aname[i]] && prefix(n, mask[i]) == prefix(addr[i], mask[i])) {
-			if (n == prefix(addr[i], mask[i]) || n == prefix(addr[i], mask[i]) + power(32-mask[i]) - 1) return 0
-			return 1
-		}
-	}
-	return 0
-}
-function lease(address, name,    key) {
-	name = tolower(name)
-	if (ip(address) < 0 || !host(name)) return
-	key = name SUBSEP address
-	if (!lease_seen[key]++) {
-		lease_count[name]++
-		lease_ip[name] = address
-		if (selected_address(address)) print address, name > (out "/leases")
-	}
-}
 FILENAME ~ /\.table$/ {
 	p = FILENAME; sub(/^.*\//, "", p); sub(/\.table$/, "", p)
 	if ($1 == "S") { count[p]++; type[p,$2] = $3; name[p,$2] = $4 }
@@ -105,7 +76,6 @@ FILENAME ~ /\/live$/ {
 	}
 	next
 }
-FILENAME ~ /\/leases.raw$/ { lease_address[++leases] = $1; lease_name[leases] = $2; next }
 FILENAME ~ /\/vpn.summary$/ {
 	split($0, pair, "="); summary[pair[1]] = pair[2]; next
 }
@@ -155,27 +125,8 @@ END {
 		with_address[aname[i]] = 1
 	}
 	for (i = 1; i <= networks_count; i++) if (!with_address[requested[i]]) fail("A selected LAN network has no usable IPv4 address.")
-	for (s = 1; s <= count["dhcp"]; s++) {
-		if (type["dhcp",s] == "host") lease(v["dhcp",s,"ip"],v["dhcp",s,"name"])
-		if (type["dhcp",s] == "dnsmasq" && v["dhcp",s,"leasefile"] != "" && v["dhcp",s,"leasefile"] != leasefile) fail("Custom DHCP lease files are not supported yet.")
-	}
-	for (i = 1; i <= leases; i++) lease(lease_address[i],lease_name[i])
-	if (devices == "") {
-		output("scope", "lan")
-		for (n in subnets) print n > (out "/sources")
-	} else {
-		output("scope", "devices")
-		num = split(devices, items, /[ \n]+/)
-		for (i = 1; i <= num; i++) {
-			n = items[i]
-			if (ip(n) < 0) {
-				if (!host(n) || lease_count[n] != 1) fail("A device hostname has no unique current DHCP address.")
-				n = lease_ip[n]
-			}
-			if (!selected_address(n)) fail("A selected device is outside the LAN or is a router address.")
-			if (!sources[n]++) print n > (out "/sources")
-		}
-	}
+	output("scope", "lan")
+	for (n in subnets) print n > (out "/sources")
 	# static tunnel addresses can create connected routes despite route-nopull
 	if (summary["ifconfig_local"] != "") {
 		a = ip(summary["ifconfig_local"]); b = ip(summary["ifconfig_peer"])

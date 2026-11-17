@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -35,6 +36,26 @@ def package(name, version):
     }
 
 
+KEY = "-----BEGIN PUBLIC KEY-----\nfixture\n-----END PUBLIC KEY-----\n"
+
+
+def digest(text):
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+# the checksum list of one release, like scripts/build-release.sh writes it
+def release_sums(version):
+    lines = []
+    for name in ("selective-vpn", "luci-app-selective-vpn"):
+        text = json.dumps(package(name, version))
+        if flag("bad-checksum") and name == "selective-vpn":
+            text += " "
+        lines.append(f"{digest(text)}  {name}-{version}.apk")
+    lines.append(f"{digest(KEY)}  selective-vpn.pub.pem")
+    lines.append(f"{digest('install')}  install.sh")
+    return "\n".join(lines) + "\n"
+
+
 def emit(value):
     print(json.dumps(value))
 
@@ -55,6 +76,12 @@ def solve(arguments):
     if "dnsmasq-full" in arguments:
         requested["dnsmasq-full"] = "2.93-r2"
         recovery = False
+    for name in ("luci", "curl", "ca-bundle"):
+        if name in arguments:
+            requested[name] = "25.12-r1"
+            recovery = False
+    if "luci" in requested:
+        requested["luci-base"] = "25.12-r1"
     if recovery:
         constraints = (root / "etc/apk/world").read_text().splitlines()
         names = {re.split(r"[=@~<>]", value)[0] for value in constraints}
@@ -113,7 +140,8 @@ if command == "apk":
         if arg in {"list", "update", "verify", "adbdump", "fetch", "add"}
     )
     operation = args[operation_index]
-    params = args[operation_index + 1 :]
+    start = operation_index + 1
+    params = args[start:]
     record("apk", *args)
     if operation == "list":
         for name, version in sorted(load().items()):
@@ -123,6 +151,9 @@ if command == "apk":
     elif operation == "verify":
         assert "--no-allow-untrusted" not in args
         assert "--check-certificate" in args
+        if "selective-vpn-" in Path(params[-1]).name:
+            keys = Path(args[args.index("--keys-dir") + 1])
+            assert (keys / "selective-vpn.pem").read_text() == KEY
         sys.exit(1 if flag("bad-signature") else 0)
     elif operation == "adbdump":
         data = json.loads(Path(params[-1]).read_text())
@@ -186,14 +217,22 @@ elif command == "curl":
     record("curl", *args)
     if flag("download-failure"):
         sys.exit(1)
-    name = args[-1].rsplit("/", 1)[1]
-    match = re.fullmatch(r"(.+)-(\d+\.\d+\.\d+-r\d+)\.apk", name)
-    assert match
-    data = package(*match.groups())
-    if flag("wrong-metadata"):
-        data["info"]["name"] = "other-app"
+    url = args[-1]
+    name = url.rsplit("/", 1)[1]
     path = Path(args[args.index("--output") + 1])
-    path.write_text(json.dumps(data))
+    if name == "SHA256SUMS":
+        latest = "/releases/latest/download/" in url
+        version = "0.1.0-r1" if latest else url.split("/")[-2][1:]
+        path.write_text(release_sums(version))
+    elif name == "selective-vpn.pub.pem":
+        path.write_text(KEY)
+    else:
+        match = re.fullmatch(r"(.+)-(\d+\.\d+\.\d+-r\d+)\.apk", name)
+        assert match
+        data = package(*match.groups())
+        if flag("wrong-metadata"):
+            data["info"]["name"] = "other-app"
+        path.write_text(json.dumps(data))
 elif command == "jsonfilter":
     sys.exit(0 if query(args[1], args[3].replace('"', "'")) else 1)
 elif command == "ubus":
@@ -251,6 +290,8 @@ elif command == "stat":
         text = "0 " + text.split(" ", 1)[1]
     print(text)
     sys.exit(result.returncode)
+elif command == "openssl":
+    sys.stdout.write("fixture public key")
 elif command == "id":
     print("1000" if flag("nonroot") else "0")
 else:

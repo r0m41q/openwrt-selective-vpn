@@ -17,14 +17,16 @@ readonly private='/etc/selective-vpn'
 readonly temporary='/tmp'
 readonly runtime='/var/run/selective-vpn'
 readonly proc='/proc'
-readonly release_url='https://github.com/r0m41q/openwrt-selective-vpn/releases/download'
+readonly release_url='https://github.com/r0m41q/openwrt-selective-vpn/releases'
+readonly keys='/etc/apk/keys'
+readonly trusted_key="$keys/selective-vpn.pem"
 readonly saved_files='network firewall pbr dhcp openvpn selective-vpn'
 work=''
 locked=0
 armed=0
 version=''
-checksum=''
-luci_checksum=''
+with_luci=1
+key_new=0
 recover=0
 
 die() {
@@ -34,12 +36,13 @@ die() {
 
 usage() {
 	cat <<'EOF'
-Usage: sh install.sh --version VERSION --sha256 SHA256 [--luci-sha256 SHA256]
+Usage: sh install.sh [--version VERSION] [--no-luci]
        sh install.sh --recover
 
-Use the APK version and SHA256 from a trusted, versioned release.
-Packages must be signed by a key already trusted by APK.
-Add --luci-sha256 to install the matching LuCI package on a router with LuCI.
+Installs the latest release, or VERSION such as 0.1.0-r1, with its LuCI app.
+The release signing key is trusted on first install and must not change later.
+--no-luci installs only the backend.
+--recover restores an interrupted installation.
 EOF
 }
 
@@ -65,6 +68,7 @@ replace_file() (
 )
 
 apk_run() {
+	if [ -s "$work/keys/selective-vpn.pem" ]; then set -- --keys-dir "$work/keys" "$@"; fi
 	apk --check-certificate --no-interactive \
 		--no-progress --no-logfile --timeout 30 --cache-dir "$work/cache" "$@"
 }
@@ -81,9 +85,14 @@ installed_version() {
 	awk -v name="$1" '$1 == name { print $2 }' "$work/before"
 }
 
+# answers come from the terminal, since the script itself may arrive on stdin
 confirm() {
 	printf '%s' "$1 [y/N] "
-	IFS= read -r answer || return 1
+	if [ -t 0 ]; then
+		IFS= read -r answer || return 1
+	else
+		IFS= read -r answer < /dev/tty || return 1
+	fi
 	case "$answer" in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac
 }
 
@@ -93,27 +102,68 @@ space() {
 	[ "$free" -ge "$2" ]
 }
 
-fetch_release() {
-	name=$1
-	expected=$2
-	file="$work/new/$name-$version.apk"
+download() {
 	curl --disable --fail --silent --show-error --location --proto '=https' \
 		--proto-redir '=https' --connect-timeout 10 --max-time 120 \
-		--max-filesize 8388608 --output "$file" \
-		"$release_url/v$version/$name-$version.apk" || die 'Release download failed.'
-	actual=$(sha256sum "$file") || die 'Cannot check the release checksum.'
+		--max-filesize 8388608 --output "$1" "$2"
+}
+
+# the release checksum list names the version and pins every downloaded file
+release_sums() {
+	if [ -n "$version" ]; then
+		download "$work/SHA256SUMS" "$release_url/download/v$version/SHA256SUMS" || die 'Cannot download the release checksums.'
+	else
+		download "$work/SHA256SUMS" "$release_url/latest/download/SHA256SUMS" || die 'Cannot find the latest release.'
+	fi
+	found=$(awk 'NF == 2 && $1 ~ /^[0-9a-f]+$/ && length($1) == 64 &&
+		$2 ~ /^selective-vpn-[0-9]+\.[0-9]+\.[0-9]+-r[0-9]+\.apk$/ {
+		v = $2; sub(/^selective-vpn-/, "", v); sub(/\.apk$/, "", v); print v; n++
+	} END { if (n != 1) exit 1 }' "$work/SHA256SUMS") || die 'The release checksums are invalid.'
+	[ -z "$version" ] || [ "$found" = "$version" ] || die 'The release checksums name another version.'
+	version=$found
+}
+
+release_sum() {
+	awk -v name="$1" 'NF == 2 && $2 == name && $1 ~ /^[0-9a-f]+$/ && length($1) == 64 { print $1; n++ }
+		END { if (n != 1) exit 1 }' "$work/SHA256SUMS"
+}
+
+fetch_checked() {
+	expected=$(release_sum "$1") || die "The release has no checksum for $1."
+	download "$work/$2" "$release_url/download/v$version/$1" || die 'Release download failed.'
+	actual=$(sha256sum "$work/$2") || die 'Cannot check the release checksum.'
 	[ "${actual%% *}" = "$expected" ] || die 'Release checksum does not match.'
-	check_package "$file" "$name" "$version" noarch
+}
+
+# trust on first use; a different key later means something is wrong
+release_key() {
+	fetch_checked selective-vpn.pub.pem release.pem
+	if [ -e "$trusted_key" ] || [ -L "$trusted_key" ]; then
+		safe_file "$trusted_key" && cmp -s "$trusted_key" "$work/release.pem" ||
+			die "The release signing key differs from $trusted_key. Installation stopped."
+	else
+		key_new=1
+	fi
+	safe_directory "$keys" || die 'Unsafe APK key directory.'
+	for key in "$keys"/*; do
+		[ ! -f "$key" ] || cp "$key" "$work/keys/" || die 'Cannot copy the APK keys.'
+	done
+	cp "$work/release.pem" "$work/keys/selective-vpn.pem" && chmod 644 "$work/keys/selective-vpn.pem" ||
+		die 'Cannot stage the release signing key.'
+	fingerprint=$(openssl pkey -pubin -in "$work/release.pem" -outform DER 2>/dev/null | sha256sum) || fingerprint=''
+	fingerprint=${fingerprint%% *}
+}
+
+fetch_release() {
+	fetch_checked "$1-$version.apk" "new/$1-$version.apk"
+	check_package "$work/new/$1-$version.apk" "$1" "$version" noarch
 }
 
 cache_previous() {
 	case "$1" in
 		selective-vpn|luci-app-selective-vpn)
 			previous="$work/old/$1-$2.apk"
-			curl --disable --fail --silent --show-error --location --proto '=https' \
-				--proto-redir '=https' --connect-timeout 10 --max-time 120 \
-				--max-filesize 8388608 --output "$previous" \
-				"$release_url/v$2/$1-$2.apk" || die 'Cannot download the previous release for recovery.'
+			download "$previous" "$release_url/download/v$2/$1-$2.apk" || die 'Cannot download the previous release for recovery.'
 			check_package "$previous" "$1" "$2" noarch ;;
 		*) apk_run fetch --output "$work/old" "$1=$2" > /dev/null ||
 			die 'Cannot cache the previous package. Keep the current installation until its signed APK is available.' ;;
@@ -355,13 +405,11 @@ while [ "$#" -gt 0 ]; do
 	case "$1" in
 		--help|-h) usage; exit 0 ;;
 		--recover) recover=1; shift ;;
-		--version|--sha256|--luci-sha256)
+		--no-luci) with_luci=0; shift ;;
+		--version)
 			[ "$#" -ge 2 ] || die 'Missing option value.'
-			case "$1" in
-				--version) [ -z "$version" ] || die 'Duplicate version.'; version=$2 ;;
-				--sha256) [ -z "$checksum" ] || die 'Duplicate checksum.'; checksum=$2 ;;
-				--luci-sha256) [ -z "$luci_checksum" ] || die 'Duplicate LuCI checksum.'; luci_checksum=$2 ;;
-			esac
+			[ -z "$version" ] || die 'Duplicate version.'
+			version=$2
 			shift 2 ;;
 		*) die 'Unknown option. See --help.' ;;
 	esac
@@ -372,7 +420,7 @@ for tool in apk awk cat chmod cmp cp df du id mkdir mktemp mv nslookup readlink 
 	command -v "$tool" > /dev/null 2>&1 || die "Missing required tool: $tool"
 done
 if [ "$recover" -eq 0 ]; then
-	for tool in curl dnsmasq jsonfilter ls ubus uci; do
+	for tool in dnsmasq jsonfilter ls openssl ubus uci; do
 		command -v "$tool" > /dev/null 2>&1 || die "Missing required tool: $tool"
 	done
 fi
@@ -380,19 +428,22 @@ case "$(apk --version)" in apk-tools\ 3.*) ;; *) die 'APK 3 is required.' ;; esa
 safe_directory /etc && safe_directory "$config" && safe_directory /etc/apk &&
 	safe_directory "$init" && safe_file "$world" || die 'Unsafe system configuration paths.'
 if [ "$recover" -eq 0 ]; then
-	printf '%s\n' "$version" | awk '!/^[0-9]+\.[0-9]+\.[0-9]+-r[0-9]+$/ { exit 1 }' || die 'Use an exact APK version, for example 0.1.0-r1.'
-	for digest in "$checksum" ${luci_checksum:+"$luci_checksum"}; do
-		[ "${#digest}" -eq 64 ] || die 'A trusted SHA256 is required for each release package.'
-		case "$digest" in *[!0-9a-f]*) die 'SHA256 must contain lowercase hexadecimal characters.' ;; esac
-	done
+	[ -z "$version" ] || printf '%s\n' "$version" | awk '!/^[0-9]+\.[0-9]+\.[0-9]+-r[0-9]+$/ { exit 1 }' ||
+		die 'Use an exact APK version, for example 0.1.0-r1.'
 else
-	[ -z "$version$checksum$luci_checksum" ] || die '--recover takes no release options.'
+	[ -z "$version" ] && [ "$with_luci" -eq 1 ] || die '--recover takes no other options.'
+fi
+# stock OpenWrt has no curl; the installer relies on its HTTPS-only download options
+if [ "$recover" -eq 0 ] && ! command -v curl > /dev/null 2>&1; then
+	confirm 'curl is needed for checked downloads. Install curl now?' || die 'Installation cancelled.'
+	apk --no-interactive update > /dev/null && apk --no-interactive add curl ca-bundle > /dev/null ||
+		die 'Cannot install curl.'
 fi
 
 work=$(mktemp -d "$temporary/selective-vpn-install.XXXXXXXX") || die 'Cannot create private staging.'
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
-mkdir "$work/cache" "$work/new" "$work/old"
+mkdir "$work/cache" "$work/new" "$work/old" "$work/keys"
 if ! mkdir "$temporary/selective-vpn-install.lock" 2>/dev/null; then
 	safe_directory "$temporary/selective-vpn-install.lock" &&
 		safe_file "$temporary/selective-vpn-install.lock/pid" || die 'Unsafe installer lock.'
@@ -432,20 +483,26 @@ for name in $saved_files; do
 done
 luci='not installed'
 [ -z "$(installed_version luci-base)" ] || luci='installed'
-[ -z "$luci_checksum" ] || [ "$luci" = installed ] || die 'Install LuCI first, or omit --luci-sha256 for a backend-only installation.'
 [ "$(uci -q get selective-vpn.main.enabled || true)" != 1 ] || die 'Disable routing before upgrading.'
 [ ! -e "$private/pending" ] && [ ! -L "$private/pending" ] || die 'Resolve the pending routing change before installing.'
 snapshot "$work/before-config" || die 'Cannot back up configuration safely.'
 cp -p "$world" "$work/world"
 check_dns
+release_sums
+release_key
 apk_run update > "$work/repositories" 2>&1 || die 'Package repositories are unavailable or cannot be verified.'
-fetch_release selective-vpn "$checksum"
-[ -z "$luci_checksum" ] || fetch_release luci-app-selective-vpn "$luci_checksum"
+fetch_release selective-vpn
+[ "$with_luci" -eq 0 ] || fetch_release luci-app-selective-vpn
 set -- "$work/new/selective-vpn-$version.apk"
 printf '%s\n' selective-vpn > "$work/targets"
-if [ -n "$luci_checksum" ]; then
+if [ "$with_luci" -eq 1 ]; then
 	set -- "$@" "$work/new/luci-app-selective-vpn-$version.apk"
 	printf '%s\n' luci-app-selective-vpn >> "$work/targets"
+	# routing is set up in the web interface
+	if [ "$luci" != installed ]; then
+		set -- "$@" luci
+		printf '%s\n' luci >> "$work/targets"
+	fi
 fi
 if [ "$dns_change" -eq 1 ]; then
 	set -- "$@" dnsmasq-full
@@ -479,7 +536,10 @@ cache_kib=$(du -sk "$work" | awk '{ print $1 }')
 required_kib=$((required_kib + cache_kib))
 space / "$required_kib" || die 'Insufficient flash for installation and recovery packages.'
 
-printf '\nOpenWrt %s, architecture %s, LuCI %s\n' "$firmware" "$architecture" "$luci"
+printf '\nSelective VPN %s for OpenWrt %s, architecture %s, LuCI %s\n' "$version" "$firmware" "$architecture" "$luci"
+if [ "$key_new" -eq 1 ]; then
+	printf 'This trusts the release signing key with SHA256 fingerprint %s\n' "${fingerprint:-unknown}"
+fi
 printf '%s\n' 'Proposed APK changes:'
 cat "$work/plan"
 if [ "$dns_change" -eq 1 ]; then
@@ -516,6 +576,10 @@ install_result=0
 apk_run --no-network add "$@" > "$work/install-log" 2>&1 || install_result=$?
 snapshot "$backup/after-config" || die 'Cannot record the installation result.'
 [ "$install_result" -eq 0 ] || die 'APK installation failed.'
+# later APK checks of the installed packages need the key in the system keyring
+if [ "$key_new" -eq 1 ]; then
+	cp "$work/release.pem" "$trusted_key" && chmod 644 "$trusted_key" || die 'Cannot save the release signing key.'
+fi
 [ "$(uci -q get selective-vpn.main.enabled || true)" != 1 ] || die 'The package unexpectedly enabled routing.'
 for name in $saved_files; do
 	[ ! -f "$backup/before-config/$name" ] ||
@@ -534,14 +598,14 @@ awk 'FILENAME == ARGV[1] { expected[$1] = $2; next }
 	END { for (n in expected) bad = 1; exit bad }' \
 	"$work/before" "$work/allowed" "$work/after" || die 'Installed packages do not match the confirmed proposal.'
 [ "$(awk '$1 == "selective-vpn" { print $2 }' "$work/after")" = "$version" ] || die 'The requested backend version was not installed.'
-if [ -n "$luci_checksum" ]; then
+if [ "$with_luci" -eq 1 ]; then
 	[ "$(awk '$1 == "luci-app-selective-vpn" { print $2 }' "$work/after")" = "$version" ] || die 'The requested LuCI version was not installed.'
 fi
 cp -p "$work/after" "$backup/installed"
 rm "$backup/armed"
 sync
 armed=0
-printf '%s\n' 'Installation completed. Configure routing before enabling it.'
-if [ -n "$luci_checksum" ]; then
-	printf '%s\n' 'Open Services > Selective VPN in LuCI.'
+printf '%s\n' "Selective VPN $version is installed. Routing stays off until you set it up."
+if [ "$with_luci" -eq 1 ]; then
+	printf '%s\n' 'Open LuCI and go to Services > Selective VPN.'
 fi

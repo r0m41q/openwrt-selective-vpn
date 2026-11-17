@@ -9,9 +9,9 @@ svpn_policy_resource() (
 )
 
 svpn_policy_section() (
-	[ "$#" -ge 5 ] && [ "$#" -le 7 ] || exit 1
+	[ "$#" -eq 7 ] || exit 1
 	printf "config policy '%s'\n\toption name '%s'\n\toption enabled '1'\n\toption interface '%s'\n\toption chain 'prerouting'\n\toption proto '%s'\n\toption dest_port '%s'\n\toption src_addr '%s'\n\toption dest_addr '%s'\n" \
-		"$1" "$2" "$3" "${6-tcp}" "${7-443}" "$4" "$5"
+		"$1" "$2" "$3" "$6" "$7" "$4" "$5"
 )
 
 svpn_policy_owned() (
@@ -84,18 +84,14 @@ svpn_dns_check() (
 
 # only prepare resources; service changes belong to the apply lifecycle
 svpn_policy_prepare() (
-	[ "$#" -ge 1 ] && [ "$#" -le 5 ] && [ "$(id -u)" -eq 0 ] || exit 1
-	network=$1 console=${2-0} browser=${3-0} fallback=${4-0}
-	use_rules=0
-	if [ "$#" -eq 1 ] || [ -n "${svpn_rules:-}" ]; then use_rules=1; fi
-	svpn_private_directory "$network" && svpn_valid_bool "$console" && svpn_valid_bool "$browser" && svpn_valid_bool "$fallback" || exit 1
-	custom=$(svpn_policy_destinations "${5-}") || { svpn_state_error 'Custom destinations are invalid or unsupported.'; exit 1; }
+	[ "$#" -eq 1 ] && [ "$(id -u)" -eq 0 ] || exit 1
+	network=$1
+	svpn_private_directory "$network" || exit 1
 	interface=$(svpn_state_read "$network/interface") && svpn_valid_interface "$interface" || exit 1
 	scope=$(svpn_state_read "$network/scope") || exit 1
-	[ "$use_rules" = 0 ] || [ "$scope" = lan ] || exit 1
-	case "$scope" in lan) kind=subnet ;; devices) kind=ipv4 ;; *) exit 1 ;; esac
+	[ "$scope" = lan ] || exit 1
 	svpn_private_file "$network/sources" && [ "$(wc -c < "$network/sources")" -le "$SVPN_MAX_LIST_BYTES" ] || exit 1
-	sources=$(svpn_normalize_list "$kind" "$(cat "$network/sources")") || exit 1
+	sources=$(svpn_normalize_list subnet "$(cat "$network/sources")") || exit 1
 	[ -n "$sources" ] || exit 1
 	for name in lan_subnets live; do
 		svpn_private_file "$network/$name" && [ "$(wc -c < "$network/$name")" -le "$SVPN_MAX_SNAPSHOT_BYTES" ] || exit 1
@@ -105,9 +101,7 @@ svpn_policy_prepare() (
 	for subnet in $eligible; do
 		[ "${subnet##*/}" -gt 0 ] && [ "${subnet##*/}" -le 30 ] || exit 1
 	done
-	if [ "$kind" = subnet ]; then
-		for source in $sources; do [ "${source##*/}" -gt 0 ] || exit 1; done
-	fi
+	for source in $sources; do [ "${source##*/}" -gt 0 ] || exit 1; done
 	umask 077
 	runtime=$(svpn_runtime_directory) || exit 1
 	count=0
@@ -137,48 +131,8 @@ svpn_policy_prepare() (
 	awk -F '\t' '$1=="S" && $3=="pbr" && $4=="config" { found++ }
 		END { exit (found != 1) }' "$work/pbr.table" || { svpn_state_error 'PBR needs its named config section.'; exit 1; }
 	svpn_policy_owned "$work" || exit 1
-	if [ "$use_rules" = 1 ]; then
-		svpn_rules_prepare "$work" "$network" && svpn_rules_policies "$work" "$interface" || exit 1
-		all_dest=$(cat "$work/destinations") || exit 1
-	else
-		console_dest=''
-		browser_dest=''
-		if [ "$console" = 1 ]; then
-			preset=xcloud_native
-			[ "$fallback" = 0 ] || preset=xcloud_native_static
-			console_dest=$(svpn_rules_preset "$work" "$preset") || exit 1
-		fi
-		if [ "$browser" = 1 ]; then browser_dest=$(svpn_rules_preset "$work" xcloud_web) || exit 1; fi
-		printf '%s\n' "$console_dest $browser_dest" | tr ' ' '\n' > "$work/defaults"
-		: > "$work/custom"
-		for value in $custom; do
-			grep -qxF "$value" "$work/defaults" || printf '%s\n' "$value" >> "$work/custom"
-		done
-		custom_dest=$(tr '\n' ' ' < "$work/custom")
-		custom_dest=${custom_dest% }
-		for name in console browser custom; do
-			case "$name" in
-				console) label='Console authentication'; dest=$console_dest ;;
-				browser) label='Browser service authentication'; dest=$browser_dest ;;
-				custom) label='Custom authentication destinations'; dest=$custom_dest ;;
-			esac
-			target=pbr.svpn_$name
-			svpn_resource_read section "$target" "$work/current" "$work" || exit 1
-			if [ "$(head -n 1 "$work/current")" = present ]; then
-				confirmed=$(svpn_tx_pointer confirmed) && svpn_tx_load "$confirmed" || {
-					svpn_state_error 'A reserved PBR section already exists without matching ownership.'; exit 1;
-				}
-				key=$(svpn_tx_key section "$target") || exit 1
-				svpn_private_file "$tx/manifest/$key/applied" && cmp -s "$tx/manifest/$key/applied" "$work/current" || exit 1
-				if [ -z "$dest" ]; then svpn_policy_resource "$work" section "$target" missing < /dev/null || exit 1; fi
-			fi
-			[ -n "$dest" ] || continue
-			svpn_policy_section "svpn_$name" "$label" "$interface" "$source_text" "$dest" > "$work/fragment" || exit 1
-			svpn_policy_resource "$work" section "$target" present < "$work/fragment" || exit 1
-		done
-		all_dest=$(svpn_normalize_list destination "$console_dest $browser_dest $custom_dest") || exit 1
-		printf '%s\n' "$all_dest" > "$work/destinations"
-	fi
+	svpn_rules_prepare "$work" "$network" && svpn_rules_policies "$work" "$interface" || exit 1
+	all_dest=$(cat "$work/destinations") || exit 1
 	domains=0
 	for value in $all_dest; do
 		if ! svpn_valid_ipv4 "$value" && ! svpn_valid_cidr "$value"; then domains=1; fi
@@ -224,7 +178,7 @@ svpn_policy_prepare() (
 		fi
 	fi
 	if [ -n "$all_dest" ]; then
-		LC_ALL=C awk -v domains="$domains" -v generic="$use_rules" -f "$SVPN_LIBRARY_DIR/policy-check.awk" \
+		LC_ALL=C awk -v domains="$domains" -f "$SVPN_LIBRARY_DIR/policy-check.awk" \
 			"$work/pbr.owned" "$work/pbr.table" "$work/sources" "$work/destinations" >> "$work/warnings" || exit 1
 	fi
 	for resource in "$work/resources/"*; do

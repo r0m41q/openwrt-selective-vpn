@@ -54,16 +54,6 @@ svpn_preset_load() (
 	if [ -n "$warning" ]; then printf '%s\n' "$warning"; fi > "$2/warning"
 )
 
-# destinations of one preset for the older console and browser switches
-svpn_rules_preset() (
-	[ "$#" -eq 2 ] || exit 1
-	directory=$1/preset.$2
-	mkdir -m 700 "$directory" && svpn_preset_load "$2" "$directory" &&
-		cat "$directory/warning" >> "$1/warnings" || exit 1
-	destinations=$(tr '\n' ' ' < "$directory/destinations") || exit 1
-	printf '%s\n' "${destinations% }"
-)
-
 svpn_rules_prepare() (
 	[ "$#" -eq 2 ] && svpn_private_directory "$1" && svpn_private_directory "$2" || exit 1
 	work=$1 network=$2

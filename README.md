@@ -1,11 +1,30 @@
 # Selective VPN
 
-Selective VPN is an OpenWrt tool for routing selected destinations from LAN devices through an OpenVPN connection using PBR. Choose a VPN and devices, preview the routes, then apply and confirm that you can still reach the router.
+Selective VPN sends chosen destinations from your LAN through an OpenVPN connection on an OpenWrt router. Everything else keeps using your normal internet connection. You set it up in the router's web interface.
 
-Routing currently covers IPv4 TCP/443. You can enter custom domains, IPv4 addresses and subnets. The original console and browser service destinations are still selected separately; console routing starts on. Installation and live routing have not been verified on a router.
+It targets OpenWrt 25.12 with LuCI, firewall4 and PBR. No release has been published yet, and live routing has not been verified on a router.
 
-It targets OpenWrt 25.12 with APK, firewall4, PBR and a dnsmasq build with nftset support. There is no published release. To try a local build, see [building](docs/building.md) and [installation](docs/installation.md).
+## Install
 
-Domain routing needs clients to use the router's compatible DNS resolver. Encrypted DNS, cached answers and IPv6 can leave traffic outside these IPv4 rules. See [routing](docs/routing.md), [diagnostics](docs/diagnostics.md) and [router checks](docs/integration.md).
+You need SSH access to the router as root and working package feeds. On the router, run:
 
-For removal and recovery, see [installation](docs/installation.md#uninstall) and [troubleshooting](docs/troubleshooting.md). MIT licensed; [contributions](docs/contributing.md) are welcome.
+```sh
+wget -qO /tmp/install.sh https://github.com/r0m41q/openwrt-selective-vpn/releases/latest/download/install.sh && sh /tmp/install.sh
+```
+
+The installer checks the router, shows every package change and asks before installing. It adds curl and LuCI if they are missing. It replaces dnsmasq with dnsmasq-full if domain routing needs it, and trusts the release signing key the first time. Routing stays off until you set it up. More options are in [installation](docs/installation.md).
+
+## Set up
+
+1. Open LuCI and go to **Services → Selective VPN → VPN**. Import your provider's `.ovpn` file or pick an OpenVPN client you already have.
+2. Open **Routing**. The **Global** rule covers every LAN device. Add a device to give it its own rule instead.
+3. For each rule, tick presets or enter your own domains, IPv4 addresses and subnets. Choose TCP, UDP and ports if you need to.
+4. Click **Preview changes**, check the routes, then **Apply**. Make sure you can still open the router, then click **Confirm** within two minutes. Otherwise the change rolls back.
+
+Devices must use the router for DNS for domain rules to work. Only IPv4 traffic is routed. See [routing](docs/routing.md), [presets](docs/presets.md) and [diagnostics](docs/diagnostics.md).
+
+## Remove
+
+Run `selective-vpn uninstall` and confirm, then `apk del luci-app-selective-vpn selective-vpn`. See [uninstall](docs/installation.md#uninstall).
+
+MIT licensed. [Contributions](docs/contributing.md) are welcome.

@@ -3,13 +3,23 @@ function field(key, choices, initial) {
 	allowed[key] = choices
 	value[key] = initial
 }
+# one entry per generated policy, named after its rule and preset
+function policies(group, choices) {
+	order[++count] = group ".*"
+	allowed[group ".*"] = choices
+}
+function valid(choices, text) {
+	if (choices == "number") return (text == "null" || (text ~ /^(0|[1-9][0-9]*)$/ && length(text) <= 15))
+	if (choices == "bool") return (text ~ /^(true|false|null)$/)
+	if (choices == "interface") return (text == "" || (text ~ /^[a-zA-Z0-9_][a-zA-Z0-9_.-]*$/ && length(text) <= 15))
+	if (choices == "tokens") return (length(text) <= 4096 && text !~ /[^a-z0-9 .\/-]/)
+	return (text ~ /^[a-z_]+$/ && index(" " choices " ", " " text " ") > 0)
+}
 BEGIN {
 	FS = "\t"
 	field("collection.state", "complete partial busy unavailable", "unavailable")
 	field("configuration.enabled", "bool", "null")
-	field("configuration.console", "bool", "null")
-	field("configuration.browser", "bool", "null")
-	field("configuration.static_fallback", "bool", "null")
+	field("configuration.rules", "number", "null")
 	field("configuration.pending_uci", "present absent unknown", "unknown")
 	field("configuration.owned_settings", "match changed unknown", "unknown")
 	field("recovery.state", "none preparing armed applying applied awaiting_confirmation confirmed recovering runtime_recovery conflict rolled_back unknown", "unknown")
@@ -30,10 +40,9 @@ BEGIN {
 	field("pbr.service", "running stopped unknown", "unknown")
 	field("pbr.errors", "present absent unknown", "unknown")
 	field("pbr.policy_configuration", "match changed unknown", "unknown")
-	split("console browser custom", policies, " ")
-	for (i = 1; i <= 3; i++) field("policies." policies[i], "present absent unknown", "unknown")
-	for (i = 1; i <= 3; i++) field("packets." policies[i], "number", "null")
-	for (i = 1; i <= 3; i++) field("bytes." policies[i], "number", "null")
+	policies("policies", "present absent unknown")
+	policies("packets", "number")
+	policies("bytes", "number")
 	field("dns.nftset_capability", "supported unsupported unknown", "unknown")
 	field("dns.integration", "ready not_ready not_required unknown", "unknown")
 	field("dns.sets", "number", "null")
@@ -62,25 +71,29 @@ BEGIN {
 	if (report == "status") {
 		field("details.interface", "interface", "")
 		field("details.addresses", "tokens", "")
-		for (i = 1; i <= 3; i++) {
-			field("details." policies[i] "_sources", "tokens", "")
-			field("details." policies[i] "_destinations", "tokens", "")
-		}
+		policies("sources", "tokens")
+		policies("destinations", "tokens")
+		policies("protocols", "tokens")
+		policies("ports", "tokens")
 	}
 }
 {
-	if (NF != 2 || !($1 in allowed)) { bad = 1; next }
-	if (allowed[$1] == "number") valid = ($2 == "null" || ($2 ~ /^(0|[1-9][0-9]*)$/ && length($2) <= 15))
-	else if (allowed[$1] == "bool") valid = ($2 ~ /^(true|false|null)$/)
-	else if (allowed[$1] == "interface") valid = ($2 == "" || ($2 ~ /^[a-zA-Z0-9_][a-zA-Z0-9_.-]*$/ && length($2) <= 15))
-	else if (allowed[$1] == "tokens") valid = (length($2) <= 4096 && $2 !~ /[^a-z0-9 .\/-]/)
-	else valid = ($2 ~ /^[a-z_]+$/ && index(" " allowed[$1] " ", " " $2 " ") > 0)
-	if (!valid) { bad = 1; next }
-	value[$1] = $2
+	if (NF != 2) { bad = 1; next }
+	if ($1 in allowed && $1 !~ /\.\*$/) {
+		if (!valid(allowed[$1], $2)) { bad = 1; next }
+		value[$1] = $2
+		next
+	}
+	group = $1; sub(/\..*$/, "", group)
+	name = substr($1, length(group) + 2)
+	if (!((group ".*") in allowed) || name !~ /^[a-zA-Z_][a-zA-Z0-9_]*$/ || length(name) > 120 ||
+		!valid(allowed[group ".*"], $2) || ++dynamic > 1024) { bad = 1; next }
+	if (!((group, name) in extra)) names[group, ++listed[group]] = name
+	extra[group, name] = $2
 }
 END {
 	if (bad || report !~ /^(status|doctor)$/) exit 1
-	printf "{\"schema\":1,\"report\":\"%s\"", report
+	printf "{\"schema\":2,\"report\":\"%s\"", report
 	group = ""
 	for (i = 1; i <= count; i++) {
 		key = order[i]
@@ -90,10 +103,20 @@ END {
 			printf ",\"%s\":{", parts[1]
 			group = parts[1]; separator = ""
 		}
+		if (parts[2] == "*") {
+			for (j = 1; j <= listed[group]; j++) {
+				name = names[group, j]
+				printf "%s\"%s\":", separator, name
+				if (allowed[key] == "number") printf "%s", extra[group, name]
+				else printf "\"%s\"", extra[group, name]
+				separator = ","
+			}
+			continue
+		}
 		printf "%s\"%s\":", separator, parts[2]
 		if (allowed[key] == "bool" || allowed[key] == "number") printf "%s", value[key]
 		else printf "\"%s\"", value[key]
 		separator = ","
 	}
-	printf "},\"limitations\":[\"ipv4_only\",\"client_dns_must_use_router\",\"encrypted_dns_and_cached_answers_may_bypass_sets\",\"domain_equivalence_needs_validation\",\"static_console_addresses_may_be_outdated\",\"counters_do_not_prove_vpn_egress_or_authentication\",\"logs_are_recent_historical_signals\",\"no_external_lookup_performed\"],\"privacy\":\"allowlisted_fields_and_log_categories_only\"}\n"
+	printf "},\"limitations\":[\"ipv4_only\",\"client_dns_must_use_router\",\"encrypted_dns_and_cached_answers_may_bypass_sets\",\"domain_equivalence_needs_validation\",\"counters_do_not_prove_vpn_egress_or_authentication\",\"logs_are_recent_historical_signals\",\"no_external_lookup_performed\"],\"privacy\":\"allowlisted_fields_and_log_categories_only\"}\n"
 }

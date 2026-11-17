@@ -145,7 +145,6 @@ class NetworkTests(unittest.TestCase):
         mode="managed",
         selection="profile.ABC12345",
         networks="",
-        devices="",
         **kwargs,
     ):
         return self.call(
@@ -153,7 +152,6 @@ class NetworkTests(unittest.TestCase):
             mode,
             selection,
             networks,
-            devices,
             **kwargs,
         )
 
@@ -219,49 +217,6 @@ class NetworkTests(unittest.TestCase):
         self.assertEqual(
             (self.plan() / "sources").read_text(), "172.19.4.0/23\n"
         )
-
-    def test_devices_resolve_dhcp_without_dns_and_deduplicate(self):
-        plan = self.plan(devices="DEVICE 192.168.8.12 192.168.8.15")
-        self.assertEqual((plan / "scope").read_text(), "devices\n")
-        self.assertEqual(
-            (plan / "sources").read_text(), "192.168.8.12\n192.168.8.15\n"
-        )
-        self.assertEqual(
-            (plan / "leases").read_text(), "192.168.8.12\tdevice\n"
-        )
-        plan = self.plan(devices=" \t\n")
-        self.assertEqual((plan / "scope").read_text(), "lan\n")
-
-    def test_static_hosts_and_expired_ambiguous_names(self):
-        self.append(
-            "dhcp",
-            "config host\n option name 'console'\n option ip '192.168.8.19'\n",
-        )
-        self.assertEqual(
-            (self.plan(devices="console") / "sources").read_text(),
-            "192.168.8.19\n",
-        )
-        self.write(
-            self.leases, "1 aa:bb:cc:dd:ee:ff 192.168.8.22 old client\n"
-        )
-        self.reject(devices="old")
-        self.write(
-            self.leases, "0 aa:bb:cc:dd:ee:ff 10.20.0.12 console client\n"
-        )
-        self.reject(devices="console")
-
-    def test_invalid_device_input_never_becomes_all_lan(self):
-        for value in (
-            "missing",
-            "999.1.1.1",
-            "192.168.8.1",
-            "192.168.8.0",
-            "192.168.8.255",
-            "10.20.0.12",
-            "x;touch /tmp/oops",
-        ):
-            with self.subTest(value=value):
-                self.reject(devices=value)
 
     def test_live_overlap_and_unavailable_network_rejected(self):
         self.live[1]["ipv4-address"][0]["address"] = "192.168.8.8"
@@ -523,10 +478,6 @@ class NetworkTests(unittest.TestCase):
         (self.root / "dirty").touch()
         self.reject()
         (self.root / "dirty").unlink()
-        self.leases.chmod(0o666)
-        self.reject()
-        self.leases.chmod(0o644)
-        self.reject(extra="date() { return 1; }; ")
         self.reject(selection="../profile.ABC12345")
 
     def test_external_pki_references_are_checked_without_importing_them(self):

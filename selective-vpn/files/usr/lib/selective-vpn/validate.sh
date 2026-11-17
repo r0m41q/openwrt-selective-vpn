@@ -111,11 +111,6 @@ svpn_valid_interface() {
 	svpn_valid_identifier "$1" && [ "${#1}" -le 15 ]
 }
 
-svpn_valid_device() {
-	[ "$#" -eq 1 ] || return 1
-	svpn_valid_ipv4 "$1" || svpn_valid_hostname "$1"
-}
-
 svpn_valid_destination() {
 	[ "$#" -eq 1 ] || return 1
 	svpn_valid_ipv4 "$1" || svpn_valid_cidr "$1" || svpn_valid_domain "$1"
@@ -126,7 +121,7 @@ svpn_normalize_list() (
 	[ "$#" -eq 2 ] || exit 1
 	LC_ALL=C
 	export LC_ALL
-	case "$1" in ipv4|subnet|domain|hostname|identifier|device|destination) ;; *) exit 1 ;; esac
+	case "$1" in ipv4|subnet|domain|hostname|identifier|destination) ;; *) exit 1 ;; esac
 	kind=$1
 	svpn_valid_size "$2" "$SVPN_MAX_LIST_BYTES" || exit 1
 	IFS="$(printf ' \t')
@@ -144,11 +139,10 @@ svpn_normalize_list() (
 			domain) svpn_valid_domain "$item" ;;
 			hostname) svpn_valid_hostname "$item" ;;
 			identifier) svpn_valid_identifier "$item" ;;
-			device) svpn_valid_device "$item" ;;
 			destination) svpn_valid_destination "$item" ;;
 		esac || exit 1
 		case "$kind" in
-			domain|hostname|device|destination)
+			domain|hostname|destination)
 				item=$(printf '%s' "$item" | tr 'A-Z' 'a-z') || exit 1 ;;
 		esac
 		case "$seen" in *"
@@ -160,12 +154,4 @@ $item
 "
 	done
 	printf '%s' "$result"
-)
-
-# return 3 for an empty selection, 1 for invalid input
-svpn_normalize_devices() (
-	[ "$#" -eq 1 ] || exit 1
-	result=$(svpn_normalize_list device "$1") || exit 1
-	[ -n "$result" ] || exit 3
-	printf '%s\n' "$result"
 )

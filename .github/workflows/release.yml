@@ -1,0 +1,43 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y build-essential libncurses-dev rsync zstd
+      - name: Build signed packages
+        env:
+          SIGNING_KEY: ${{ secrets.SELECTIVE_VPN_SIGNING_KEY }}
+        run: |
+          [ -n "$SIGNING_KEY" ] || { echo 'Add the SELECTIVE_VPN_SIGNING_KEY secret first.' >&2; exit 1; }
+          key=$(mktemp)
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$SIGNING_KEY" > "$key"
+          sh scripts/build-release.sh --sign-key "$key"
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          [ -d "dist/$TAG" ] || { echo "The tag does not match the package version in dist/." >&2; exit 1; }
+          cd "dist/$TAG"
+          sha256sum -c SHA256SUMS
+          gh release create "$TAG" --title "Selective VPN ${TAG#v}" --notes-file - ./* <<EOF
+          Install on the router over SSH as root:
+
+          \`\`\`sh
+          wget -qO /tmp/install.sh https://github.com/${{ github.repository }}/releases/latest/download/install.sh && sh /tmp/install.sh
+          \`\`\`
+
+          Signing key SHA256 fingerprint: $(cat KEY-FINGERPRINT)
+          EOF

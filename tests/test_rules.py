@@ -420,7 +420,7 @@ class RuleLifecycleTests(unittest.TestCase):
         life.write(config, initial, 0o644)
         first = (
             life.call(
-                "apply-rules",
+                "apply",
                 "managed",
                 "profile.ABC12345",
                 "",

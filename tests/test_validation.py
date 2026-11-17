@@ -196,12 +196,7 @@ class ValidationTests(unittest.TestCase):
             ["", "a" * 16, "tun/0", "@tun0"],
         )
 
-    def test_devices_and_destinations(self):
-        self.cases(
-            "valid_device",
-            ["Device", "192.168.1.42", "device.lan"],
-            ["", "192.168.1.42/24", "256.168.1.1", "*", "::1", "01.2.3.4"],
-        )
+    def test_destinations(self):
         self.cases(
             "valid_destination",
             ["20.201.200.49", "51.12.31.0/32", "example.com"],
@@ -227,11 +222,6 @@ class ValidationTests(unittest.TestCase):
                 "domain",
                 "EXAMPLE.COM example.com\nother.example\tEXAMPLE.COM",
                 b"example.com\nother.example\n",
-            ),
-            (
-                "device",
-                "192.168.1.42\nDevice\tdevice",
-                b"192.168.1.42\ndevice\n",
             ),
             ("ipv4", "1.2.3.4 1.2.3.4 5.6.7.8", b"1.2.3.4\n5.6.7.8\n"),
             (
@@ -259,30 +249,15 @@ class ValidationTests(unittest.TestCase):
         self.check("normalize_list", ("domain", " " * 4096))
         for kind, value in (
             ("domain", "good.example bad_name"),
-            ("device", "device 256.0.0.1"),
+            ("ipv4", "1.2.3.4 256.0.0.1"),
             ("subnet", "10.0.0.1/8"),
-            ("device", " ".join(["device"] * 65)),
+            ("hostname", " ".join(["device"] * 65)),
+            ("device", "192.168.1.42"),
             ("domain", " " * 4097),
             ("unknown", ""),
             ("ipv4", "1.2.3.4\r"),
         ):
             self.check("normalize_list", (kind, value), expected=1)
-
-    def test_empty_devices_are_distinct_from_invalid_devices(self):
-        for value in ("", " ", "\t\n"):
-            self.check("normalize_devices", (value,), expected=3)
-        for value in (
-            "999.0.0.1",
-            "device invalid/name",
-            "*",
-            "device;reboot",
-        ):
-            self.check("normalize_devices", (value,), expected=1)
-        self.check(
-            "normalize_devices",
-            ("Device 192.168.1.42 device",),
-            output=b"device\n192.168.1.42\n",
-        )
 
     def test_untrusted_strings_are_not_executed_or_echoed(self):
         attacks = [
@@ -309,7 +284,7 @@ class ValidationTests(unittest.TestCase):
                     self.check(validator, (attack,), expected=1)
             self.check("normalize_list", ("domain", attack), expected=1)
         self.check(
-            "normalize_list", ("$(printf INJECTED)", "device"), expected=1
+            "normalize_list", ("$(printf INJECTED)", "domain"), expected=1
         )
 
     def test_argument_counts(self):
@@ -323,9 +298,7 @@ class ValidationTests(unittest.TestCase):
             "valid_identifier",
             "reserved_identifier",
             "valid_interface",
-            "valid_device",
             "valid_destination",
-            "normalize_devices",
         )
         for name in single:
             self.check(name, (), expected=1)

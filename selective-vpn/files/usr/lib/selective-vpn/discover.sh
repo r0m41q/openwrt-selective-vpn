@@ -78,3 +78,16 @@ svpn_discover_leases() (
 		}
 	' "$SVPN_LEASE_FILE"
 )
+
+# OpenVPN clients the user configured outside this app
+svpn_discover_clients() (
+	[ "$#" -eq 0 ] || exit 1
+	svpn_config_file "$SVPN_CONFIG_DIR/openvpn" && svpn_uci_clean openvpn || exit 1
+	runtime=$(svpn_runtime_directory) || exit 1
+	work=$(mktemp -d "$runtime/clients.XXXXXXXX") || exit 1
+	trap 'rm -rf -- "$work"' EXIT
+	cp "$SVPN_CONFIG_DIR/openvpn" "$work/openvpn" && chmod 600 "$work/openvpn" || exit 1
+	svpn_uci_export "$work/openvpn" > "$work/export" || exit 1
+	awk -v package=openvpn -f "$SVPN_LIBRARY_DIR/uci-inspect.awk" "$work/export" > "$work/table" || exit 1
+	awk -F '\t' '$1 == "S" && $3 == "openvpn" && $4 != "-" && $4 !~ /^svpn_/ { print $4 }' "$work/table"
+)

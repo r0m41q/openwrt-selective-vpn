@@ -3,8 +3,8 @@ status. Updates run at most once every 30 seconds after the previous update
 finishes, pause in hidden tabs, and stop on failure. Reports older than a minute
 are marked stale. Diagnostics run only when requested.
 
-The overview shows saved policy sources and destinations alongside evidence
-from the running router. A populated DNS set or a packet counter does not prove
+The overview lists each applied policy by rule and preset, with its devices,
+destinations, protocols and ports, next to evidence from the running router. A populated DNS set or a packet counter does not prove
 traffic left through the VPN. Exit IP and destination access are not checked.
 
 Recovery controls use saved settings. **Reload PBR** reapplies those settings and
@@ -17,9 +17,13 @@ confirm router access within the recovery window. A lost response is not retried
 Refresh status before another action. If recovery remains stuck, use
 `selective-vpn doctor` over SSH and keep the recovery service running.
 
+Over SSH, `selective-vpn status` prints the same report as JSON, including the
+routes per policy. `selective-vpn confirm`, `disable` and `rollback` work when
+LuCI is unreachable.
+
 On **Diagnostics**, run checks and download the redacted JSON report. It contains
-fixed status fields, counters and recent log category counts. It excludes
-addresses, domains, credentials and raw logs. Log counts include all OpenVPN
+fixed status fields, per-policy rule state and counters, and recent log category
+counts. It excludes addresses, domains, credentials and raw logs. Log counts include all OpenVPN
 clients and can describe earlier failures.
 
 To validate routing, compare counters before and after traffic to a selected

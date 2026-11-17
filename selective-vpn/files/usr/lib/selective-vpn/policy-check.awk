@@ -26,16 +26,6 @@ function may_overlap(text, values,    a,n,i,j,result) {
 	}
 	return 0
 }
-function https_port(text,    a,n,i,b) {
-	if (text == "") return 1
-	n = split(text,a,/ +/)
-	for (i = 1; i <= n; i++) {
-		if (a[i] == "443" || a[i] ~ /!/) return 1
-		if (split(a[i],b,"-") == 2 && b[1] <= 443 && b[2] >= 443) return 1
-		if (a[i] !~ /^[0-9-]+$/) return 1
-	}
-	return 0
-}
 FILENAME ~ /pbr\.owned$/ { owned[$1]=1; next }
 FILENAME ~ /pbr\.table$/ {
 	if ($1 == "S") { type[$2] = $3; name[$2] = $4; sections++ }
@@ -76,7 +66,6 @@ END {
 			exit 1
 		}
 		if (type[s] != "policy" || (v[s,"chain"] != "" && v[s,"chain"] != "prerouting")) continue
-		if (!generic && v[s,"proto"] ~ /^(udp|17|icmp|1|ipv6-icmp|58)$/) continue
-		if ((generic || https_port(v[s,"dest_port"])) && may_overlap(v[s,"src_addr"],sources) && may_overlap(v[s,"dest_addr"],destinations)) print "possible_policy_overlap:" s
+		if (may_overlap(v[s,"src_addr"],sources) && may_overlap(v[s,"dest_addr"],destinations)) print "possible_policy_overlap:" s
 	}
 }

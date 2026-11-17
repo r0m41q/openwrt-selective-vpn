@@ -104,11 +104,8 @@ svpn_report_collect() {
 	if [ -f "$report_work/selective-vpn.table" ]; then
 		enabled=$(svpn_table_get "$report_work/selective-vpn.table" main enabled) || enabled=''
 		svpn_report_bool configuration.enabled "$enabled"
-		for key in console browser fallback; do
-			value=$(svpn_table_get "$report_work/selective-vpn.table" svpn_active "$key") || value=''
-			case "$key" in fallback) field=static_fallback ;; *) field=$key ;; esac
-			svpn_report_bool "configuration.$field" "$value"
-		done
+		value=$(awk -F '\t' '$1 == "S" && $3 == "active_rule" { n++ } END { print n + 0 }' "$report_work/selective-vpn.table") &&
+			svpn_report_set configuration.rules "$value"
 	fi
 	if svpn_report_capture "$report_work/supervisor.json" ubus -t 3 call service list '{"name":"selective-vpn"}'; then
 		value=$(svpn_json_field "$report_work/supervisor.json" "@['selective-vpn'].instances.recovery.running") || value=''
@@ -118,6 +115,7 @@ svpn_report_collect() {
 	svpn_report_journal || { report_meta=''; policies=unknown; partial=1; }
 	svpn_report_routes
 	svpn_report_pbr
+	svpn_report_owned
 	svpn_report_dns_capability
 	if [ "$report" = status ]; then svpn_report_details; fi
 	if [ -n "${report_meta:-}" ]; then
@@ -208,12 +206,25 @@ svpn_report_identity() {
 	svpn_valid_identifier "$client" && svpn_valid_netdev "$tun" && svpn_valid_interface "$logical"
 }
 
-svpn_report_details() {
+# owned policies as id, label and section name, with ids like global or tv__preset
+svpn_report_owned() {
+	: > "$report_work/owned"
 	[ -f "$report_work/pbr.table" ] || return 0
-	for name in console browser custom; do
-		[ "$(svpn_table_get "$report_work/pbr.table" "svpn_$name" enabled)" = 1 ] || continue
-		sources=$(svpn_table_get "$report_work/pbr.table" "svpn_$name" src_addr) || continue
-		destinations=$(svpn_table_get "$report_work/pbr.table" "svpn_$name" dest_addr) || continue
+	awk -F '\t' '$1 == "S" { own[$2] = ($3 == "policy" && $4 ~ /^svpn_route_[a-zA-Z_][a-zA-Z0-9_]*$/); section[$2] = $4 }
+		$1 == "V" && $3 == "name" { label[$2] = $4 }
+		END { for (s in own) if (own[s] && label[s] ~ /^Selective VPN: [a-zA-Z0-9_ ]+$/)
+			print substr(section[s], 12) "\t" label[s] "\t" section[s] }' "$report_work/pbr.table" |
+		LC_ALL=C sort | head -n 128 > "$report_work/owned"
+}
+
+svpn_report_details() {
+	tab=$(printf '\t')
+	while IFS="$tab" read -r name label section; do
+		[ "$(svpn_table_get "$report_work/pbr.table" "$section" enabled)" = 1 ] || continue
+		sources=$(svpn_table_get "$report_work/pbr.table" "$section" src_addr) &&
+			destinations=$(svpn_table_get "$report_work/pbr.table" "$section" dest_addr) &&
+			protocols=$(svpn_table_get "$report_work/pbr.table" "$section" proto) &&
+			ports=$(svpn_table_get "$report_work/pbr.table" "$section" dest_port) || continue
 		sources=$(svpn_normalize_list destination "$sources") &&
 			destinations=$(svpn_policy_destinations "$destinations") || continue
 		[ -n "$sources" ] && [ -n "$destinations" ] || continue
@@ -221,10 +232,14 @@ svpn_report_details() {
 		for source in $sources; do
 			svpn_valid_ipv4 "$source" || { svpn_valid_subnet "$source" && [ "${source##*/}" -gt 0 ]; } || valid=0
 		done
+		for value in $protocols; do case "$value" in tcp|udp) ;; *) valid=0 ;; esac; done
+		for value in $ports; do case "$value" in *[!0-9-]*) valid=0 ;; esac; done
 		[ "$valid" = 1 ] || continue
-		svpn_report_set "details.${name}_sources" "$(printf '%s' "$sources" | tr '\n' ' ')"
-		svpn_report_set "details.${name}_destinations" "$(printf '%s' "$destinations" | tr '\n' ' ')"
-	done
+		svpn_report_set "sources.$name" "$(printf '%s' "$sources" | tr '\n' ' ')"
+		svpn_report_set "destinations.$name" "$(printf '%s' "$destinations" | tr '\n' ' ')"
+		svpn_report_set "protocols.$name" "$protocols"
+		svpn_report_set "ports.$name" "$ports"
+	done < "$report_work/owned"
 }
 
 svpn_report_routes() {
@@ -330,19 +345,14 @@ svpn_report_policy_rules() {
 	array=$(svpn_json_field "$report_work/nft.json" '@.nftables') || return 0
 	case "$array" in \[*) ;; *) return 0 ;; esac
 	svpn_json_field "$report_work/nft.json" '@.nftables[*].rule.comment' > "$report_work/comments" || :
-	all=1 expected_total=0 policy_observed=0
-	for name in console browser custom; do
-		case "$name" in console) label='Console authentication' ;; browser) label='Browser service authentication' ;; custom) label='Custom authentication destinations' ;; esac
-		if grep -qxF "$label" "$report_work/comments"; then value=present; else value=absent; fi
+	all=1 policy_observed=0
+	tab=$(printf '\t')
+	while IFS="$tab" read -r name label section; do
+		if grep -qxF "$label" "$report_work/comments"; then value=present; else value=absent; all=0; fi
 		svpn_report_set "policies.$name" "$value"
-		expected=$(awk -F '\t' -v name="svpn_$name" '$1=="S" && $4==name {found++} END { print found+0 }' "$report_work/pbr.table")
-		if [ "$expected" -eq 1 ]; then
-			expected_total=$((expected_total + 1))
-			[ "$value" = present ] || all=0
-		else [ "$value" = absent ] || all=0; fi
-	done
+	done < "$report_work/owned"
 	# comments locate native rules; they cannot establish ownership or egress
-	if [ "$all" -eq 1 ] && [ "$expected_total" -gt 0 ] && [ "${policies:-unknown}" = match ] && [ "$enabled" = 1 ] && [ "$dirty" = absent ]; then
+	if [ "$all" -eq 1 ] && [ -s "$report_work/owned" ] && [ "${policies:-unknown}" = match ] && [ "$enabled" = 1 ] && [ "$dirty" = absent ]; then
 		svpn_report_set evidence.policy_rules observed
 		policy_observed=1
 	fi
@@ -353,12 +363,8 @@ svpn_report_policy_rules() {
 		object=$(svpn_json_field "$report_work/nft.json" "$base") || break
 		[ -n "$object" ] || break
 		comment=$(svpn_json_field "$report_work/nft.json" "$base.rule.comment") || comment=''
-		case "$comment" in
-			'Console authentication') name=console ;;
-			'Browser service authentication') name=browser ;;
-			'Custom authentication destinations') name=custom ;;
-			*) index=$((index + 1)); continue ;;
-		esac
+		name=$(awk -F '\t' -v label="$comment" '$2 == label { print $1; exit }' "$report_work/owned")
+		[ -n "$name" ] || { index=$((index + 1)); continue; }
 		for kind in packets bytes; do
 			values=$(svpn_json_field "$report_work/nft.json" "$base.rule.expr[*].counter.$kind") || values=''
 			case "$values" in ''|*[!0-9]*) values=unknown ;; esac
@@ -368,7 +374,7 @@ svpn_report_policy_rules() {
 	done
 	[ "$index" -lt 512 ] || return 0
 	awk -F '\t' '
-		NF==3 && $1 ~ /^(console|browser|custom)$/ && $2 ~ /^(packets|bytes)$/ {
+		NF==3 && $1 ~ /^[a-zA-Z_][a-zA-Z0-9_]*$/ && $2 ~ /^(packets|bytes)$/ {
 			key=$2 "." $1
 			if($3 !~ /^(0|[1-9][0-9]*)$/ || length($3)>15) bad[key]=1
 			else { total[key]+=$3; seen[key]=1 }

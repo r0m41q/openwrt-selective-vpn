@@ -3,7 +3,7 @@
 svpn_lifecycle() (
 	[ "$#" -ge 1 ] && [ "$(id -u)" -eq 0 ] || exit 1
 	operation=$1; shift
-	case "$operation" in apply|apply-rules|enable|reconnect|disable|rollback|uninstall|confirm|recover|boot|event|tick) ;; *) exit 1 ;; esac
+	case "$operation" in apply|enable|reconnect|disable|rollback|uninstall|confirm|recover|boot|event|tick) ;; *) exit 1 ;; esac
 	umask 077
 	runtime=$(svpn_runtime_directory) || exit 1
 	if [ ! -e "$runtime/lifecycle.lock" ] && [ ! -L "$runtime/lifecycle.lock" ]; then
@@ -12,10 +12,7 @@ svpn_lifecycle() (
 	svpn_private_file "$runtime/lifecycle.lock" || exit 1
 	exec 8<> "$runtime/lifecycle.lock" || exit 1
 	case "$operation" in event|tick) flock -n 8 || exit 4 ;; *) flock -w 3 8 || exit 4 ;; esac
-	case "$operation" in
-		apply-rules) svpn_life_apply_rules "$@" ;;
-		*) "svpn_life_$operation" "$@" ;;
-	esac
+	"svpn_life_$operation" "$@"
 )
 
 svpn_life_preflight() (
@@ -85,7 +82,6 @@ svpn_life_reconcile_ready() (
 		svpn_resource_read "$kind" "$target" "$work/current" "$work" && cmp -s "$resource" "$work/current" || exit 1
 	done
 	svpn_discover_live "$work" > "$work/live.final" && cmp -s "$network/live" "$work/live.final" || exit 1
-	svpn_discover_leases "$work" > "$work/leases.final" && cmp -s "$network/leases.raw" "$work/leases.final" || exit 1
 	svpn_network_recheck "$network" && svpn_policy_recheck "$policy" || exit 1
 	svpn_vpn_ready "$work" "$(svpn_state_read "$network/client")" "$(svpn_state_read "$network/device")" &&
 		svpn_pbr_ready "$work" "$(svpn_state_read "$network/interface")" "$(svpn_state_read "$network/device")" || exit 1
@@ -355,17 +351,15 @@ svpn_life_finish() (
 	printf '%s\n' "$id"
 )
 
+# uses the saved draft rules, or the confirmed snapshot when svpn_rules=active
 svpn_life_apply() (
-	[ "$#" -eq 10 ] || exit 1
-	mode=$1 selection=$2 networks=$3 devices=$4 console=$5 browser=$6 fallback=$7 custom=$8 ack=$9
-	shift 9; peer=$1
+	[ "$#" -eq 5 ] || exit 1
+	mode=$1 selection=$2 networks=$3 ack=$4 peer=$5
 	case "$mode" in managed|external) ;; *) exit 1 ;; esac
-	[ "$ack" = 1 ] && svpn_valid_ipv4 "$peer" && svpn_valid_bool "$console" && svpn_valid_bool "$browser" && svpn_valid_bool "$fallback" || {
+	[ "$ack" = 1 ] && svpn_valid_ipv4 "$peer" || {
 		svpn_state_error 'Acknowledge the IPv4-only routing limitation before enabling.'; exit 1;
 	}
-	networks=$(svpn_normalize_list identifier "$networks") && devices=$(svpn_normalize_list device "$devices") &&
-		custom=$(svpn_policy_destinations "$custom") || exit 1
-	[ -n "${svpn_rules:-}" ] || [ "$console$browser" != 00 ] || [ -n "$custom" ] || { svpn_state_error 'Select at least one routing destination.'; exit 1; }
+	networks=$(svpn_normalize_list identifier "$networks") || exit 1
 	runtime=$(svpn_runtime_directory) || exit 1
 	work=$(mktemp -d "$runtime/lifecycle.XXXXXXXX") || exit 1
 	network='' policy='' id=''
@@ -373,8 +367,8 @@ svpn_life_apply() (
 	trap 'exit 1' HUP INT TERM
 	mkdir -m 700 "$work/wanted" || exit 1
 	svpn_life_preflight "$work" || exit 1
-	network=$(svpn_network_prepare "$mode" "$selection" "$networks" "$devices") || exit 1
-	policy=$(svpn_policy_prepare "$network" "$console" "$browser" "$fallback" "$custom") || exit 1
+	network=$(svpn_network_prepare "$mode" "$selection" "$networks") || exit 1
+	policy=$(svpn_policy_prepare "$network") || exit 1
 	if [ -n "${svpn_review:-}" ]; then
 		[ "$(svpn_routing_digest "$network" "$policy")" = "$svpn_review" ] || {
 			svpn_state_error 'Routing inputs changed. Preview again before applying.'; exit 1;
@@ -397,26 +391,18 @@ svpn_life_apply() (
 		[ -e "$resource" ] || continue
 		cp "$resource" "$work/wanted/${resource##*/}" || exit 1
 	done
-	if [ -d "$policy/rules" ]; then
-		for row in "$policy/rules/"*; do
-			svpn_life_want "$work" section "selective-vpn.svpn_rule_${row##*/}" present < "$row/active" || exit 1
-		done
-	fi
+	for row in "$policy/rules/"*; do
+		svpn_life_want "$work" section "selective-vpn.svpn_rule_${row##*/}" present < "$row/active" || exit 1
+	done
 	# all interpolated values have already passed their list validators
 	{
 		printf "config settings 'svpn_active'\n\toption enabled '1'\n\toption mode '%s'\n\toption selection '%s'\n" "$mode" "$selection"
-		for key in networks devices custom; do
-			case "$key" in networks) value=$networks ;; devices) value=$devices ;; custom) value=$custom ;; esac
-			value=$(printf '%s' "$value" | tr '\n' ' ')
-			printf "\toption %s '%s'\n" "$key" "$value"
-		done
-		[ -z "${svpn_rules:-}" ] || printf "\toption rules '1'\n"
-		printf "\toption console '%s'\n\toption browser '%s'\n\toption fallback '%s'\n\toption ipv6_acknowledged '1'\n" "$console" "$browser" "$fallback"
+		printf "\toption networks '%s'\n\toption ipv6_acknowledged '1'\n" "$(printf '%s' "$networks" | tr '\n' ' ')"
 	} | svpn_life_want "$work" section selective-vpn.svpn_active present || exit 1
 	printf "\toption enabled '1'\n" | svpn_life_want "$work" option selective-vpn.main.enabled present || exit 1
 	svpn_life_supported "$work" "$(svpn_state_read "$network/interface")" || exit 1
 	svpn_life_obsolete "$work" apply || exit 1
-	# unchanged lease renewals must not write another journal to flash
+	# unchanged events must not write another journal to flash
 	if svpn_life_reconcile_ready "$work" "$network" "$policy"; then
 		confirmed=$(svpn_tx_pointer confirmed) && svpn_tx_load "$confirmed" || exit 1
 		svpn_life_fingerprint "$tx/lifecycle" > "$work/fingerprint" &&
@@ -429,19 +415,10 @@ svpn_life_apply() (
 	svpn_discover_live "$work" > "$work/live.final" && cmp -s "$network/live" "$work/live.final" || {
 		svpn_transaction rollback "$id"; exit 1;
 	}
-	svpn_discover_leases "$work" > "$work/leases.final" && cmp -s "$network/leases.raw" "$work/leases.final" || {
-		svpn_transaction rollback "$id"; exit 1;
-	}
 	svpn_network_recheck "$network" && svpn_policy_recheck "$policy" || {
 		svpn_transaction rollback "$id"; exit 1;
 	}
 	svpn_life_finish "$id" "$work"
-)
-
-svpn_life_apply_rules() (
-	[ "$#" -eq 5 ] || exit 1
-	svpn_rules=1
-	svpn_life_apply "$1" "$2" "$3" '' 0 0 0 '' "$4" "$5"
 )
 
 svpn_life_enable() (
@@ -450,12 +427,9 @@ svpn_life_enable() (
 	work=$(mktemp -d "$runtime/settings.XXXXXXXX") || exit 1
 	trap 'rm -rf -- "$work"' EXIT
 	svpn_life_active "$work" || exit 1
-	if [ "$(svpn_life_setting "$work" rules)" = 1 ]; then svpn_rules=active; fi
+	svpn_rules=active
 	svpn_life_apply "$(svpn_life_setting "$work" mode)" "$(svpn_life_setting "$work" selection)" \
-		"$(svpn_life_setting "$work" networks)" "$(svpn_life_setting "$work" devices)" \
-		"$(svpn_life_setting "$work" console)" "$(svpn_life_setting "$work" browser)" \
-		"$(svpn_life_setting "$work" fallback)" "$(svpn_life_setting "$work" custom)" \
-		"$(svpn_life_setting "$work" ipv6_acknowledged)" "$1"
+		"$(svpn_life_setting "$work" networks)" "$(svpn_life_setting "$work" ipv6_acknowledged)" "$1"
 )
 
 svpn_life_reconnect() (
@@ -579,9 +553,6 @@ svpn_life_fingerprint() (
 			svpn_config_file "$SVPN_CONFIG_DIR/$package" || exit 1
 			sha256sum "$SVPN_CONFIG_DIR/$package" || exit 1
 		done
-		if [ -e "$SVPN_LEASE_FILE" ]; then
-			svpn_config_file "$SVPN_LEASE_FILE" && sha256sum "$SVPN_LEASE_FILE" || exit 1
-		fi
 		svpn_discover_live "$work" > "$work/event.live" || exit 1
 		sort "$work/event.live" || exit 1
 		tun=$(svpn_state_read "$meta/after.device") || exit 1

@@ -12,12 +12,12 @@ The [25.12.6 feed manifest](https://downloads.openwrt.org/releases/25.12.6/targe
 
 ## Components and ownership
 
-The current build has a core `selective-vpn` package and a `luci-app-selective-vpn` frontend. The CLI and RPC backend use the same validation, configuration, and recovery code. Shell and BusyBox utilities handle orchestration; ucode handles authenticated RPC. No separate web server or continuous polling daemon is needed.
+The current build has a core `selective-vpn` package and a `luci-app-selective-vpn` frontend. Routing is set up in LuCI; the CLI only reports status and runs recovery actions. Both use the same validation, configuration, and recovery code. Shell and BusyBox utilities handle orchestration; ucode handles authenticated RPC. No separate web server or continuous polling daemon is needed.
 
 | Location | Purpose |
 | --- | --- |
 | `/etc/config/selective-vpn` | Non-secret settings; initially disabled |
-| `/usr/bin/selective-vpn` | CLI |
+| `/usr/bin/selective-vpn` | Status and recovery CLI |
 | `/usr/lib/selective-vpn/control` | Fixed backend operations |
 | `/usr/lib/selective-vpn/` | Shared backend libraries |
 | `/etc/openvpn/selective-vpn/` | Imported profile and credentials; directory mode 700, files 600 |
@@ -32,9 +32,9 @@ Core dependencies include `pbr`, `openvpn-openssl`, and their resolved networkin
 
 ## Traffic selection
 
-The current build has fixed TCP/443 policies for its built-in service destinations and a separate custom-destination policy. Preview the exact destination list before applying. Routing is IPv4-only, and protocol and port settings are not yet configurable.
+Settings are a list of named `rule` sections. `global` covers eligible LAN devices without their own rule; a device rule has one IPv4 address and replaces Global for that device, even when it routes nothing. Each rule has custom destinations with its own protocols and ports, plus optional presets. Every rule and every preset on it becomes a separate PBR policy, named `svpn_route_<rule>` or `svpn_route_<rule>__<preset>`, so a preset keeps its own protocol and port. Global sources are the eligible LAN subnets split into CIDRs that leave out every device rule. Preview shows the resulting routes per policy before anything is applied. Routing is IPv4-only.
 
-Discover eligible local networks from firewall membership and live netifd addresses. Default to the ordinary trusted LAN when it is unambiguous; ask for network selection during setup otherwise. Do not automatically include guest networks, VPN servers, or other zones. In all-LAN mode, generate source IPv4 CIDRs from those networks. In device mode, resolve DHCP names to current IPv4 addresses and require every selected address to belong to an eligible network. Empty optional device input means all eligible LAN clients. Reject ambiguous names and overlapping address space across eligible and excluded networks.
+Discover eligible local networks from firewall membership and live netifd addresses. Default to the ordinary trusted LAN when it is unambiguous; let the user choose networks otherwise. Do not automatically include guest networks, VPN servers, or other zones. Device addresses must belong to an eligible network and must not be router or network addresses. Reject overlapping address space across eligible and excluded networks.
 
 Prerouting keeps router-originated connections outside these policies. Source IPs are routing selectors; existing firewall rules remain the isolation boundary against spoofed traffic. Do not combine `@device` and IPv4 entries to express an intersection: PBR processes source types separately. Append owned policies after existing policies, preserve their order, and report earlier overlapping rules. Never move a user's catch-all or ignore policy automatically. These details were checked in the [25.12 PBR service source](https://github.com/openwrt/packages/blob/openwrt-25.12/net/pbr/files/etc/init.d/pbr).
 
@@ -93,7 +93,7 @@ Status separates a usable tunnel, installed policies and observed matching traff
 
 ## Distribution and validation
 
-Build APKs using the matching SDK and [OpenWrt packaging rules](https://github.com/openwrt/openwrt/blob/openwrt-25.12/include/package-pack.mk), with declared dependencies and idempotent hooks. The installer uses versioned assets, verifies hashes, and retains APK signature verification. An application signing key must have a documented fingerprint and explicit installation consent; never use a general `--allow-untrusted` workaround. A checksum downloaded beside an artifact detects corruption but does not independently authenticate the publisher. Document the initial trust in the versioned installer and signing key. No public installation command is ready until real release assets exist.
+Build APKs using the matching SDK and [OpenWrt packaging rules](https://github.com/openwrt/openwrt/blob/openwrt-25.12/include/package-pack.mk), with declared dependencies and idempotent hooks. The installer uses versioned assets, verifies hashes, and retains APK signature verification. An application signing key must have a documented fingerprint and explicit installation consent; never use a general `--allow-untrusted` workaround. A checksum downloaded beside an artifact detects corruption but does not independently authenticate the publisher. Document the initial trust in the versioned installer and signing key. The release installer trusts the signing key from the release on first use, shows its fingerprint and refuses a different key later.
 
 Automate validators, profile parsing, generation, ownership, failure recovery, permissions, installer decisions, and RPC boundaries. Then test on OpenWrt: external tunnel attachment with PBR, reboot/reconnect/network reload, resolver replacement and rollback, nftset updates, selected-source routing, WAN and management preservation, IPv6 warnings, and clean uninstall. Test packets and counters separately from configuration generation. Client connectivity and packet egress need real router observation; unit tests cannot establish either.
 

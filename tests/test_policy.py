@@ -94,18 +94,17 @@ ftset\n",
             0o644,
         )
 
-    def prepare(
-        self, console="1", browser="0", fallback="0", custom="", **kwargs
-    ):
-        return self.call(
-            'svpn_policy_prepare "$@"',
-            self.network,
-            console,
-            browser,
-            fallback,
-            custom,
-            **kwargs,
+    # the Global rule with these presets and custom destinations
+    def prepare(self, presets="xcloud_native", destinations="", **kwargs):
+        self.write(
+            self.f.config / "selective-vpn",
+            "config settings 'main'\n option enabled '0'\n"
+            "config rule 'global'\n option proto 'tcp udp'\n"
+            f" option destinations '{destinations}'\n"
+            + "".join(f" list preset '{p}'\n" for p in presets.split()),
+            0o644,
         )
+        return self.call('svpn_policy_prepare "$@"', self.network, **kwargs)
 
     def plan(self, **kwargs):
         return Path(self.prepare(**kwargs).stdout.decode().strip())
@@ -126,70 +125,10 @@ ftset\n",
         self.assertEqual(set(self.f.runtime.glob("policy.*")), previews)
         return result
 
-    def test_independent_console_browser_modes_and_defaults(self):
-        for console, browser in (
-            ("1", "0"),
-            ("0", "1"),
-            ("1", "1"),
-            ("0", "0"),
-        ):
-            with self.subTest(console=console, browser=browser):
-                plan = self.plan(console=console, browser=browser)
-                names = {
-                    p.name for p in (plan / "resources").glob("section.*")
-                }
-                self.assertEqual(
-                    "section.pbr.svpn_console" in names, console == "1"
-                )
-                self.assertEqual(
-                    "section.pbr.svpn_browser" in names, browser == "1"
-                )
-                for path in (plan / "resources").glob("section.*"):
-                    text = path.read_text()
-                    for field in (
-                        "proto 'tcp'",
-                        "dest_port '443'",
-                        "chain 'prerouting'",
-                        "src_addr '192.168.8.0/24'",
-                        "interface 'svpn_vpn'",
-                    ):
-                        self.assertIn(field, text)
-                    self.assertNotIn("@br", text)
-                if console == browser == "0":
-                    self.assertEqual(list((plan / "resources").iterdir()), [])
-                self.discard(plan)
-
-    def test_custom_destinations_are_separate_normalized_and_deduplicated(
-        self,
-    ):
-        plan = self.plan(
-            custom="LOGIN.Example.com login.example.com 8.8.4.4 8.8.4.0/24 xs\
-ts.auth.xboxlive.com"
-        )
-        text = self.resource(plan, "svpn_custom")
-        self.assertIn("dest_addr 'login.example.com 8.8.4.4 8.8.4.0/24'", text)
-        self.assertNotIn("xsts.auth.xboxlive.com", text)
-        plan = self.plan(console="0", custom="login.example.com")
-        self.assertTrue((plan / "resources/section.pbr.svpn_custom").exists())
-
-    def test_fallback_replaces_only_console_domains(self):
-        plan = self.plan(browser="1", fallback="1")
-        console = self.resource(plan, "svpn_console")
-        self.assertIn("20.201.200.49 51.12.31.0", console)
-        self.assertNotIn("xsts.auth.xboxlive.com", console)
-        self.assertIn(
-            "xgpuweb.gssv-play-prod.xboxlive.com",
-            self.resource(plan, "svpn_browser"),
-        )
-        self.assertIn(
-            "static_console_addresses_may_be_outdated",
-            (plan / "warnings").read_text(),
-        )
-        self.assertEqual((plan / "dns").read_text(), "dnsmasq.nftset\n")
-
     def test_static_only_does_not_require_dns_or_change_resolver(self):
         plan = self.plan(
-            fallback="1", extra="dnsmasq() { return 1; }; ss() { return 1; }; "
+            presets="xcloud_native_static",
+            extra="dnsmasq() { return 1; }; ss() { return 1; }; ",
         )
         self.assertEqual((plan / "dns").read_text(), "not_required\n")
         self.assertFalse(
@@ -197,27 +136,20 @@ ts.auth.xboxlive.com"
         )
         self.assertNotIn("client_dns", (plan / "warnings").read_text())
         self.reject(
-            browser="1", fallback="1", extra="dnsmasq() { return 1; }; "
+            presets="xcloud_web xcloud_native_static",
+            extra="dnsmasq() { return 1; }; ",
         )
 
-    def test_sources_cover_multiple_lans_and_selected_devices(self):
+    def test_sources_cover_multiple_lans(self):
         self.write(self.network / "sources", "192.168.8.0/24\n10.20.0.0/24\n")
         self.write(
             self.network / "lan_subnets", "192.168.8.0/24\n10.20.0.0/24\n"
         )
-        plan = self.plan(fallback="1")
+        plan = self.plan(presets="xcloud_native_static")
         self.assertIn(
-            "src_addr '192.168.8.0/24 10.20.0.0/24'",
-            self.resource(plan, "svpn_console"),
+            "src_addr '10.20.0.0/24 192.168.8.0/24'",
+            self.resource(plan, "svpn_route_global__xcloud_native_static"),
         )
-        self.write(self.network / "scope", "devices\n")
-        for values in ("192.168.8.12\n", "192.168.8.12\n192.168.8.15\n"):
-            self.write(self.network / "sources", values)
-            plan = self.plan()
-            self.assertIn(
-                "src_addr '" + " ".join(values.split()) + "'",
-                self.resource(plan, "svpn_console"),
-            )
 
     def test_bad_sources_destinations_and_toggles_never_broaden_scope(self):
         for value in (
@@ -231,20 +163,13 @@ ts.auth.xboxlive.com"
             "10.0.0.1 " * 1000,
         ):
             with self.subTest(value=value[:40]):
-                self.reject(custom=value)
-        self.reject(console="yes")
+                self.reject(destinations=value)
         for value in ("", "0.0.0.0/0\n", "@br-lan\n", "192.168.8.0/24 evil\n"):
             self.write(self.network / "sources", value)
             self.reject()
+        self.write(self.network / "sources", "192.168.8.0/24\n")
         self.write(self.network / "scope", "devices\n")
-        for value in (
-            "10.20.0.12\n",
-            "192.168.8.1\n",
-            "192.168.8.0\n",
-            "192.168.8.255\n",
-        ):
-            self.write(self.network / "sources", value)
-            self.reject()
+        self.reject()
 
     def test_nftset_compile_token_is_required(self):
         for value in (
@@ -326,14 +251,14 @@ ts.auth.xboxlive.com"
 '\n option dest_dns '8.8.8.8'\n"
         )
         self.reject()
-        self.plan(fallback="1")
+        self.plan(presets="xcloud_native_static")
 
     def test_other_policy_order_and_fields_remain_unchanged(self):
         extra = "config policy 'first'\n option name 'MY_PRIVATE_NAME'\n opti\
 on interface 'wan'\n option src_addr '192.168.8.0/24'\nconfig policy\n option\
  interface 'ignore'\n option dest_addr '0.0.0.0/0'\n"
         self.pbr(extra=extra)
-        plan = self.plan(browser="1")
+        plan = self.plan(presets="xcloud_native xcloud_web")
         warnings = (plan / "warnings").read_text()
         self.assertIn("possible_policy_overlap:2", warnings)
         self.assertIn("possible_policy_overlap:3", warnings)
@@ -344,23 +269,19 @@ on interface 'wan'\n option src_addr '192.168.8.0/24'\nconfig policy\n option\
         value = (self.f.config / "pbr").read_text()
         self.assertLess(
             value.index("config policy 'first'"),
-            value.index("config policy 'svpn_console'"),
+            value.index("config policy 'svpn_route_global__xcloud_native'"),
         )
         self.assertLess(
             value.index("option interface 'ignore'"),
-            value.index("config policy 'svpn_browser'"),
+            value.index("config policy 'svpn_route_global__xcloud_web'"),
         )
         self.assertIn("MY_PRIVATE_NAME", value)
         self.f.invoke("rollback", identifier)
 
-    def test_nonmatching_existing_udp_output_and_other_sources_do_not_warn(
-        self,
-    ):
+    def test_output_disabled_and_other_sources_do_not_warn(self):
         for settings in (
-            "option proto 'udp'",
             "option chain 'output'",
             "option src_addr '10.20.0.0/24'",
-            "option dest_port '80'",
             "option enabled '0'",
         ):
             self.pbr(
@@ -407,7 +328,8 @@ on interface 'wan'\n option src_addr '192.168.8.0/24'\nconfig policy\n option\
 
     def test_reserved_names_and_later_owned_edits_are_refused(self):
         self.pbr(
-            extra="config policy 'svpn_console'\n option interface 'wan'\n"
+            extra="config policy 'svpn_route_global__xcloud_native'\n option\
+ interface 'wan'\n"
         )
         self.reject()
         self.pbr()
@@ -425,22 +347,22 @@ on interface 'wan'\n option src_addr '192.168.8.0/24'\nconfig policy\n option\
         self.reject()
 
     def test_disabling_one_policy_removes_only_owned_section(self):
-        plan = self.plan(browser="1")
+        plan = self.plan(presets="xcloud_native xcloud_web")
         identifier = self.f.begin()
         self.call('svpn_policy_enqueue "$@"', identifier, plan)
         self.f.arm_apply(identifier)
         self.f.confirm(identifier)
-        plan = self.plan(console="0", browser="1")
-        self.assertEqual(self.resource(plan, "svpn_console"), "missing\n")
-        self.assertTrue(
-            self.resource(plan, "svpn_browser").startswith("present\n")
-        )
+        plan = self.plan(presets="xcloud_web")
+        native = "svpn_route_global__xcloud_native"
+        web = "svpn_route_global__xcloud_web"
+        self.assertEqual(self.resource(plan, native), "missing\n")
+        self.assertTrue(self.resource(plan, web).startswith("present\n"))
         identifier = self.f.begin()
         self.call('svpn_policy_enqueue "$@"', identifier, plan)
         self.f.arm_apply(identifier)
         value = (self.f.config / "pbr").read_text()
-        self.assertNotIn("config policy 'svpn_console'", value)
-        self.assertIn("config policy 'svpn_browser'", value)
+        self.assertNotIn(f"config policy '{native}'", value)
+        self.assertIn(f"config policy '{web}'", value)
         self.f.invoke("rollback", identifier)
 
     def test_existing_support_and_resolver_do_not_create_duplicate_options(

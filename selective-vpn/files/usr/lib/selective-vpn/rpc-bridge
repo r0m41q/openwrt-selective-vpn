@@ -83,7 +83,7 @@ case "$operation" in
 		work=$(mktemp -d "$runtime/settings.XXXXXXXX") || exit 1
 		trap 'rm -rf -- "$work"' EXIT
 		svpn_life_active "$work" || exit 1
-		for key in mode selection networks devices console browser fallback custom ipv6_acknowledged; do
+		for key in mode selection networks ipv6_acknowledged; do
 			value=$(svpn_life_setting "$work" "$key" || :)
 			json_add_string "$key" "$value"
 		done
@@ -98,7 +98,7 @@ case "$operation" in
 		value=$(svpn_preset_catalog) || exit 1
 		json_add_string presets "$value" ;;
 	clients)
-		value=$(svpn_setup_clients) || exit 1
+		value=$(svpn_discover_clients) || exit 1
 		json_add_string clients "$value" ;;
 	leases)
 		value=$(svpn_routing_leases) || exit 1
@@ -167,12 +167,12 @@ case "$operation" in
 				json_dump
 				exit 0
 			fi
-			svpn_routing_preview_rules "$mode" "$selection" "$networks"
+			svpn_routing_preview "$mode" "$selection" "$networks"
 			exit
 		else
 			svpn_review=$(field review) || exit 1
 			printf '%s\n' "$svpn_review" | grep -Eq '^[a-f0-9]{64}$' || exit 1
-			svpn_lifecycle apply-rules "$mode" "$selection" "$networks" "$ack" "$peer" >/dev/null || exit 1
+			svpn_lifecycle apply "$mode" "$selection" "$networks" "$ack" "$peer" >/dev/null || exit 1
 			id=$(svpn_tx_pointer pending || :)
 			json_add_string id "$id"
 		fi ;;

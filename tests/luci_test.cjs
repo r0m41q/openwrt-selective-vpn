@@ -42,7 +42,7 @@ test('RPC jobs are polled until complete, including status without an ok field',
 	let polls = 0;
 	const f = apiFixture(method => method !== 'job' ? { ok: true, job: 'job-1' } :
 		++polls === 1 ? { ok: true, state: 'running' } :
-			{ ok: true, state: 'complete', result: { schema: 1, vpn: { tunnel: 'ready' } } });
+			{ ok: true, state: 'complete', result: { schema: 2, vpn: { tunnel: 'ready' } } });
 	assert.equal((await f.api.call('status')).vpn.tunnel, 'ready');
 	assert.equal(polls, 2);
 	assert.equal(f.calls[0].options.reject, true);
@@ -489,15 +489,20 @@ function reportLogic() {
 
 function statusReport(changes = {}) {
 	return {
-		schema: 1, report: 'status', collection: { state: 'complete' },
-		configuration: { enabled: true, console: true, browser: false, pending_uci: 'absent', owned_settings: 'match' },
+		schema: 2, report: 'status', collection: { state: 'complete' },
+		configuration: { enabled: true, rules: 2, pending_uci: 'absent', owned_settings: 'match' },
 		recovery: { state: 'confirmed', supervisor: 'running' }, vpn: { tunnel: 'ready', process: 'running', ipv4: 'usable', logical_interface: 'attached' },
 		routing: { main_ipv4_default: 'present', vpn_default: 'present', mark_rule: 'present' },
 		pbr: { service: 'running', version: 'supported', errors: 'absent', policy_configuration: 'match' },
 		dns: { integration: 'ready', nftset_capability: 'supported', sets: 1, population: 'empty' },
 		evidence: { tunnel: 'observed', policy_rules: 'observed', policy_matches: 'unverified' },
-		policies: { console: 'present' }, packets: { console: 0 }, bytes: { console: 0 },
-		details: { interface: 'tun_sv0', addresses: '10.8.0.2/24', console_sources: '192.168.8.0/24', console_destinations: 'xsts.auth.xboxlive.com' },
+		policies: { global__xcloud_native: 'present', tv: 'present' },
+		packets: { global__xcloud_native: 0, tv: 3 }, bytes: { global__xcloud_native: 0, tv: 180 },
+		details: { interface: 'tun_sv0', addresses: '10.8.0.2/24' },
+		sources: { global__xcloud_native: '192.168.8.0/25 192.168.8.128/26', tv: '192.168.8.30' },
+		destinations: { global__xcloud_native: 'xsts.auth.xboxlive.com', tv: 'example.com 9.9.9.9' },
+		protocols: { global__xcloud_native: 'tcp', tv: 'tcp udp' },
+		ports: { global__xcloud_native: '443', tv: '' },
 		...changes
 	};
 }
@@ -545,7 +550,7 @@ function monitorFixture(handler, options = {}) {
 }
 
 test('doctor jobs accept report schemas and recovery calls keep their narrow arguments', async () => {
-	const f = apiFixture(method => method === 'job' ? { ok: true, state: 'complete', result: { schema: 1, report: 'doctor' } } : { ok: true, job: '1' });
+	const f = apiFixture(method => method === 'job' ? { ok: true, state: 'complete', result: { schema: 2, report: 'doctor' } } : { ok: true, job: '1' });
 	assert.equal((await f.api.call('doctor')).report, 'doctor');
 	for (const operation of ['enable', 'disable', 'rollback']) {
 		const api = apiFixture(method => method === 'job' ? { ok: true, state: 'complete', result: { ok: true } } : { ok: true, job: '1' });
@@ -557,22 +562,24 @@ test('doctor jobs accept report schemas and recovery calls keep their narrow arg
 
 test('report cleaning drops secrets, raw logs, addresses and false gameplay claims', () => {
 	const raw = statusReport({ report: 'doctor', password: 'private-secret', logs: { raw: 'private-secret', authentication_failure: 2 },
-		evidence: { game_stream: 'observed', device_authentication: 'observed', exit_ip: '203.0.113.5' }, packets: { console: 'private-secret', browser: -1, custom: 1e15 } });
+		evidence: { game_stream: 'observed', device_authentication: 'observed', exit_ip: '203.0.113.5' },
+		packets: { global: 'private-secret', tv: -1, phone: 1e15, 'bad-name': 1, '<b>': 1, ok: 5 } });
 	const value = reportLogic().clean(raw, 'doctor');
 	const encoded = JSON.stringify(value);
 	for (const secret of ['private-secret', '10.8.0.2', '192.168.8.0', 'xsts.auth', '203.0.113.5']) assert.ok(!encoded.includes(secret));
 	assert.equal(value.evidence.game_stream, 'unknown');
-	assert.equal(value.packets.console, null);
-	assert.equal(value.packets.browser, null);
-	assert.equal(value.packets.custom, null);
+	assert.deepEqual(Object.keys(value.packets), ['ok']);
+	assert.equal(value.packets.ok, 5);
 	assert.equal(value.logs.authentication_failure, 2);
-	assert.throws(() => reportLogic().clean({ schema: 2 }, 'doctor'));
+	assert.equal(value.configuration.rules, 2);
+	assert.throws(() => reportLogic().clean({ schema: 1 }, 'doctor'));
 });
 
 test('overview shows configured scope and separate tunnel, rule and traffic evidence', () => {
 	const f = monitorFixture();
 	const text = textContent(f.root);
-	for (const expected of ['tun_sv0', '10.8.0.2/24', '192.168.8.0/24', 'xsts.auth.xboxlive.com', 'Configured authentication domains: 1', 'IPv4 TCP/443', 'remain unverified']) assert.ok(text.includes(expected), expected);
+	for (const expected of ['tun_sv0', '10.8.0.2/24', 'Global (xcloud_native): 192.168.8.0/25, 192.168.8.128/26 → xsts.auth.xboxlive.com (TCP 443)',
+		'tv: 192.168.8.30 → example.com, 9.9.9.9 (TCP/UDP)', 'Configured routed domains: 2', 'tv rule / packets / bytes', 'remain unverified']) assert.ok(text.includes(expected), expected);
 	assert.match(textContent(f.view.statusArea), /Present \/ 0 \/ 0/);
 	assert.equal(f.view.buttons.disable.disabled, false);
 	assert.equal(f.view.buttons.reconnect.disabled, false);
@@ -712,12 +719,11 @@ test('diagnostics run on demand and download only the cleaned doctor report', as
 });
 
 test('malformed overview details and recovery identifiers cannot become actionable evidence', () => {
-	const detail = reportLogic().details({ details: { interface: '<script>', addresses: '999.0.0.1/24',
-		console_sources: '0.0.0.0/0', console_destinations: '$(id)' } });
+	const detail = reportLogic().details({ details: { interface: '<script>', addresses: '999.0.0.1/24' },
+		sources: { global: '0.0.0.0/0', tv: '192.168.8.30', 'x y': '192.168.8.31' }, destinations: { global: 'example.com', tv: '$(id)' } });
 	assert.equal(detail.interface, '');
 	assert.equal(detail.addresses.length, 0);
-	assert.equal(detail.policies[0].sources.length, 0);
-	assert.equal(detail.policies[0].destinations.length, 0);
+	assert.equal(detail.policies.length, 0);
 	for (const pending of [{ id: '../shadow' }, { id: 'e'.repeat(32), state: 'constructor' }]) {
 		const f = monitorFixture(null, { data: [statusReport(), { enabled: '1' }, pending] });
 		assert.equal(f.view.buttons.disable.disabled, true);

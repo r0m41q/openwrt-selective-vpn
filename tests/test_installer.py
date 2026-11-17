@@ -1,4 +1,3 @@
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -43,7 +42,7 @@ class InstallerTests(unittest.TestCase):
         for path in (
             "bin",
             "etc/config",
-            "etc/apk",
+            "etc/apk/keys",
             "etc/init.d",
             "tmp",
             "proc/net",
@@ -75,6 +74,7 @@ class InstallerTests(unittest.TestCase):
             "df",
             "stat",
             "id",
+            "openssl",
         ):
             path = self.root / "bin" / command
             path.write_text(
@@ -103,6 +103,7 @@ class InstallerTests(unittest.TestCase):
         for path in (
             "/etc/selective-vpn-install",
             "/etc/apk/world",
+            "/etc/apk/keys",
             "/etc/config",
             "/etc/init.d",
             "/etc/selective-vpn",
@@ -124,6 +125,8 @@ class InstallerTests(unittest.TestCase):
             "safe_directory /etc/apk ", f"safe_directory {self.root}/etc/apk "
         )
         text = text.replace("space / ", f"space {self.root} ")
+        # answers come on stdin here, not from a terminal
+        text = text.replace(" < /dev/tty", "")
         self.script = self.root / "install.sh"
         self.script.write_text(text)
         self.environment = {**os.environ, "test_root": str(self.root)}
@@ -134,32 +137,12 @@ class InstallerTests(unittest.TestCase):
     def flag(self, name):
         (self.root / name).touch()
 
-    def arguments(self, luci=False):
-        def digest(name):
-            return hashlib.sha256(
-                json.dumps(
-                    {
-                        "info": {
-                            "name": name,
-                            "version": VERSION,
-                            "arch": "noarch",
-                            "installed-size": 4096,
-                        }
-                    }
-                ).encode()
-            ).hexdigest()
-
-        arguments = ["--version", VERSION, "--sha256", digest("selective-vpn")]
-        if luci:
-            arguments += ["--luci-sha256", digest("luci-app-selective-vpn")]
-        return arguments
-
     def run_install(self, data="n\n", arguments=None, **kwargs):
         return subprocess.run(
             [
                 *SHELL,
                 str(self.script),
-                *(self.arguments() if arguments is None else arguments),
+                *([] if arguments is None else arguments),
             ],
             input=data.encode(),
             capture_output=True,
@@ -225,14 +208,42 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr.decode())
         self.assertFalse(any(call[0] == "service" for call in self.calls()))
 
-    def test_luci_requires_base_and_installs_matching_frontend(self):
-        result = self.run_install(arguments=self.arguments(luci=True))
-        self.assertNotEqual(result.returncode, 0)
-        self.packages["luci-base"] = "25.12-r1"
-        self.save_packages()
-        result = self.run_install("y\n", self.arguments(luci=True))
+    def test_latest_release_installs_app_luci_and_trusts_key_once(self):
+        result = self.run_install("y\n")
         self.assertEqual(result.returncode, 0, result.stderr.decode())
-        self.assertIn("Services > Selective VPN", result.stdout.decode())
+        output = result.stdout.decode()
+        self.assertIn("Selective VPN 0.1.0-r1", output)
+        self.assertIn("signing key with SHA256 fingerprint", output)
+        self.assertIn("Services > Selective VPN", output)
+        packages = json.loads((self.root / "packages.json").read_text())
+        self.assertEqual(packages["luci-app-selective-vpn"], VERSION)
+        self.assertIn("luci", packages)
+        key = self.root / "etc/apk/keys/selective-vpn.pem"
+        self.assertIn("fixture", key.read_text())
+        urls = [call[-1] for call in self.calls() if call[0] == "curl"]
+        self.assertTrue(
+            urls[0].endswith("/releases/latest/download/SHA256SUMS")
+        )
+        self.assertTrue(all("/download/v0.1.0-r1/" in url for url in urls[1:]))
+        result = self.run_install("y\n")
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertNotIn("fingerprint", result.stdout.decode())
+        key.write_text("another key\n")
+        self.packages = json.loads((self.root / "packages.json").read_text())
+        result = self.run_install("y\n")
+        self.assertIn("signing key differs", result.stderr.decode())
+        self.assertEqual(key.read_text(), "another key\n")
+
+    def test_pinned_version_and_backend_only(self):
+        result = self.run_install("y\n", ["--version", VERSION, "--no-luci"])
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        packages = json.loads((self.root / "packages.json").read_text())
+        self.assertEqual(packages["selective-vpn"], VERSION)
+        self.assertNotIn("luci-app-selective-vpn", packages)
+        self.assertNotIn("luci", packages)
+        urls = [call[-1] for call in self.calls() if call[0] == "curl"]
+        self.assertTrue(urls[0].endswith("/download/v0.1.0-r1/SHA256SUMS"))
+        self.assertNotIn("Services > Selective VPN", result.stdout.decode())
 
     def test_preflight_failures(self):
         for name in (
@@ -265,24 +276,25 @@ class InstallerTests(unittest.TestCase):
 
     def test_invalid_release_arguments(self):
         for arguments in (
-            [],
             ["--version"],
             ["--yes"],
-            ["--version", "../../main", "--sha256", "a" * 64],
+            ["--version", "../../main"],
+            ["--sha256", "a" * 64],
             ["--recover", "--version", VERSION],
+            ["--recover", "--no-luci"],
         ):
             with self.subTest(arguments=arguments):
                 result = self.run_install(arguments=arguments)
                 self.assertNotEqual(result.returncode, 0)
 
     def test_checksum_mismatch(self):
-        arguments = self.arguments()
-        arguments[-1] = "0" * 64
-        result = self.run_install("y\n", arguments)
+        self.flag("bad-checksum")
+        result = self.run_install("y\n")
         self.assertIn("checksum does not match", result.stderr.decode())
         self.no_mutations()
 
-    def test_missing_bootstrap_tool(self):
+    # run with only the fixture commands and the standard tools it needs
+    def isolate(self):
         for name in (
             "awk",
             "cat",
@@ -290,6 +302,7 @@ class InstallerTests(unittest.TestCase):
             "cmp",
             "cp",
             "du",
+            "ls",
             "mkdir",
             "mktemp",
             "mv",
@@ -303,15 +316,26 @@ class InstallerTests(unittest.TestCase):
             path = self.root / "bin" / name
             if not path.exists():
                 path.symlink_to(shutil.which(name))
-        (self.root / "bin/curl").unlink()
         self.script.write_text(
             self.script.read_text().replace(
                 f"PATH={self.root}/bin:{os.environ['PATH']}",
                 f"PATH={self.root}/bin",
             )
         )
+
+    def test_missing_bootstrap_tool(self):
+        self.isolate()
+        (self.root / "bin/openssl").unlink()
         result = self.run_install("y\n")
-        self.assertIn("Missing required tool: curl", result.stderr.decode())
+        self.assertIn("Missing required tool: openssl", result.stderr.decode())
+
+    def test_missing_curl_is_offered_before_anything_else(self):
+        self.isolate()
+        (self.root / "bin/curl").unlink()
+        result = self.run_install("n\n")
+        self.assertIn("curl is needed", result.stdout.decode())
+        self.assertIn("Installation cancelled", result.stderr.decode())
+        self.assertFalse((self.root / "calls").exists())
 
     def test_pending_recovery_and_backend_lock(self):
         private = self.root / "etc/selective-vpn"
@@ -390,7 +414,9 @@ class InstallerTests(unittest.TestCase):
         self.packages["selective-vpn"] = "0.0.9-r1"
         self.save_packages()
         path = self.root / "etc/config/selective-vpn"
-        path.write_text("config settings 'main'\n option console '0'\n")
+        path.write_text(
+            "config settings 'main'\n option ipv6_acknowledged '1'\n"
+        )
         before = path.read_bytes()
         result = self.run_install("y\n")
         self.assertEqual(result.returncode, 0, result.stderr.decode())
@@ -419,7 +445,7 @@ class InstallerTests(unittest.TestCase):
     def test_interrupted_install_can_be_recovered(self):
         self.flag("interrupt-install")
         process = subprocess.Popen(
-            [*SHELL, str(self.script), *self.arguments()],
+            [*SHELL, str(self.script)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -452,7 +478,7 @@ class InstallerTests(unittest.TestCase):
     def test_interruption_after_package_scripts_recovers_automatically(self):
         self.flag("interrupt-check")
         process = subprocess.Popen(
-            [*SHELL, str(self.script), *self.arguments()],
+            [*SHELL, str(self.script)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

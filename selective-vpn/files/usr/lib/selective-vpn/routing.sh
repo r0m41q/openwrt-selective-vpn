@@ -1,15 +1,9 @@
 #!/bin/sh
 
-svpn_routing_preview_rules() (
-	[ "$#" -eq 3 ] || exit 1
-	svpn_rules=1
-	svpn_routing_preview "$1" "$2" "$3" '' 0 0 0 ''
-)
-
 svpn_routing_digest() (
 	[ "$#" -eq 2 ] && svpn_private_directory "$1" && svpn_private_directory "$2" || exit 1
 	{
-		for name in network.source firewall.source openvpn.source dhcp.source live leases.raw profile.source sources lan_networks lan_subnets; do
+		for name in network.source firewall.source openvpn.source dhcp.source live profile.source sources lan_networks lan_subnets; do
 			svpn_private_file "$1/$name" || exit 1
 			sha256sum < "$1/$name" || exit 1
 		done
@@ -87,18 +81,19 @@ svpn_routing_routes() (
 	cat "$1/../routes"
 )
 
+# preview the saved rule list for one VPN and the chosen LAN networks
 svpn_routing_preview() (
-	[ "$#" -eq 8 ] || exit 1
+	[ "$#" -eq 3 ] || exit 1
 	network='' policy=''
 	trap '[ -z "$network" ] || svpn_network_discard "$network"; [ -z "$policy" ] || svpn_policy_discard "$policy"' EXIT
 	trap 'exit 1' HUP INT TERM
-	if ! network=$(svpn_network_prepare "$1" "$2" "$3" "$4"); then
+	if ! network=$(svpn_network_prepare "$1" "$2" "$3"); then
 		json_add_boolean ok 0
 		json_add_string code vpn_scope
 		json_dump
 		exit 0
 	fi
-	if ! policy=$(svpn_policy_prepare "$network" "$5" "$6" "$7" "$8"); then
+	if ! policy=$(svpn_policy_prepare "$network"); then
 		json_add_boolean ok 0
 		json_add_string code dns_policy
 		json_dump
@@ -114,10 +109,8 @@ svpn_routing_preview() (
 		value=$(cat "$policy/$name") || exit 1
 		json_add_string "$name" "$value"
 	done
-	if [ -d "$policy/rules" ]; then
-		value=$(svpn_routing_routes "$policy/rules") || exit 1
-		json_add_string routes "$value"
-	fi
+	value=$(svpn_routing_routes "$policy/rules") || exit 1
+	json_add_string routes "$value"
 	value=$(svpn_routing_digest "$network" "$policy") || exit 1
 	json_add_string review "$value"
 	value=$(while IFS= read -r warning; do

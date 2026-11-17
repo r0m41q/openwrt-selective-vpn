@@ -23,17 +23,13 @@ class IntegrationTests(unittest.TestCase):
         )
         original_route = (case.root / "routes4").read_bytes()
         original_ipv6 = (case.root / "routes6").read_bytes()
+        case.rules("xcloud_native")
 
         identifier = (
             case.call(
                 "apply",
                 "managed",
                 "profile.ABC12345",
-                "",
-                "",
-                "1",
-                "0",
-                "0",
                 "",
                 "1",
                 "192.168.8.2",
@@ -44,11 +40,11 @@ class IntegrationTests(unittest.TestCase):
         case.call("confirm", identifier)
         active = pbr.read_text()
         self.assertIn("policy 'personal'", active)
-        self.assertIn("policy 'svpn_console'", active)
+        self.assertIn("policy 'svpn_route_global__xcloud_native'", active)
         self.assertIn("option src_addr '192.168.8.0/24'", active)
         self.assertIn("option proto 'tcp'", active)
         self.assertIn("option dest_port '443'", active)
-        self.assertNotIn("policy 'svpn_browser'", active)
+        self.assertNotIn("policy 'svpn_route_global'", active)
         self.assertTrue((case.root / "pbr.dnsmasq").exists())
 
         reconnect = (
@@ -79,7 +75,7 @@ class IntegrationTests(unittest.TestCase):
         disabled = case.call("disable", "192.168.8.2").stdout.decode().strip()
         case.call("confirm", disabled)
         self.assertIn("policy 'personal'", pbr.read_text())
-        self.assertNotIn("policy 'svpn_console'", pbr.read_text())
+        self.assertNotIn("policy 'svpn_route_", pbr.read_text())
         self.assertFalse((case.root / "vpn-running").exists())
         self.assertEqual((case.root / "routes4").read_bytes(), original_route)
         self.assertEqual((case.root / "routes6").read_bytes(), original_ipv6)
@@ -124,11 +120,6 @@ class IntegrationTests(unittest.TestCase):
                 "external",
                 "personal",
                 "",
-                "",
-                "1",
-                "0",
-                "1",
-                "",
                 "1",
                 "192.168.8.2",
             )
@@ -144,7 +135,7 @@ class IntegrationTests(unittest.TestCase):
         case.call("confirm", repeated)
         self.assertIn("policy 'personal'", pbr.read_text())
         self.assertIn("supported_interface 'vpnuser'", pbr.read_text())
-        self.assertNotIn("policy 'svpn_console'", pbr.read_text())
+        self.assertNotIn("policy 'svpn_route_", pbr.read_text())
         self.assertTrue((case.root / "external-running").exists())
         self.assertEqual(profile.read_bytes(), before)
 

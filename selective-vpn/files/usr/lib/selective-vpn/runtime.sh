@@ -148,13 +148,6 @@ svpn_pbr_policies() (
 	while IFS= read -r label; do
 		case "$label" in 'Selective VPN: '*) grep -qxF "$label" "$work/route.labels" || exit 1 ;; esac
 	done < "$work/pbr.comments"
-	for name in console browser custom; do
-		svpn_resource_read section "pbr.svpn_$name" "$work/policy.current" "$work" || exit 1
-		case "$name" in console) label='Console authentication' ;; browser) label='Browser service authentication' ;; custom) label='Custom authentication destinations' ;; esac
-		if [ "$(head -n 1 "$work/policy.current")" = present ]; then
-			grep -qxF "$label" "$work/pbr.comments" || exit 1
-		elif grep -qxF "$label" "$work/pbr.comments"; then exit 1; fi
-	done
 )
 
 svpn_pbr_reload() (

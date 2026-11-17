@@ -33,11 +33,10 @@ svpn_network_owned() (
 
 # prepare private candidates; applying them requires the recovery lifecycle
 svpn_network_prepare() (
-	[ "$#" -eq 4 ] && [ "$(id -u)" -eq 0 ] || exit 1
+	[ "$#" -eq 3 ] && [ "$(id -u)" -eq 0 ] || exit 1
 	mode=$1 selection=$2
 	case "$mode" in managed|external) ;; *) exit 1 ;; esac
 	networks=$(svpn_normalize_list identifier "$3") || exit 1
-	devices=$(svpn_normalize_list device "$4") || exit 1
 	umask 077
 	runtime=$(svpn_runtime_directory) || exit 1
 	count=0
@@ -56,7 +55,6 @@ svpn_network_prepare() (
 	svpn_discover_configs "$work" && svpn_discover_live "$work" > "$work/live" || {
 		svpn_state_error 'Network discovery failed. Check saved and pending configuration.'; exit 1;
 	}
-	svpn_discover_leases "$work" > "$work/leases.raw" || exit 1
 	svpn_network_owned "$work" || exit 1
 	if [ "$mode" = managed ]; then
 		svpn_resource_target file "$selection/client.ovpn" || exit 1
@@ -143,7 +141,7 @@ svpn_network_prepare() (
 		}
 		[ "$other_dev" != "$tun" ] || { svpn_state_error 'A standalone OpenVPN profile uses the selected TUN device.'; exit 1; }
 	done
-	for name in sources leases lan_networks lan_subnets lan_zones; do : > "$work/$name"; done
+	for name in sources lan_networks lan_subnets lan_zones; do : > "$work/$name"; done
 	owned_zone=0
 	if [ -e "$SVPN_PRIVATE_DIR/confirmed" ]; then
 		confirmed=$(svpn_tx_pointer confirmed) && svpn_tx_load "$confirmed" || exit 1
@@ -152,9 +150,9 @@ svpn_network_prepare() (
 	fi
 	LC_ALL=C awk -v out="$work" -v mode="$mode" -v client="$client" -v tun="$tun" \
 		-v owned_zone="$owned_zone" \
-		-v profile="$profile" -v networks="$networks" -v devices="$devices" -v leasefile="$SVPN_LEASE_FILE" \
-		-f "$SVPN_LIBRARY_DIR/network.awk" "$work/"*.table "$work/live" "$work/leases.raw" "$work/vpn.summary" || exit 1
-	for name in sources leases lan_networks lan_subnets lan_zones; do
+		-v profile="$profile" -v networks="$networks" \
+		-f "$SVPN_LIBRARY_DIR/network.awk" "$work/"*.table "$work/live" "$work/vpn.summary" || exit 1
+	for name in sources lan_networks lan_subnets lan_zones; do
 		sort -u "$work/$name" > "$work/sorted" && mv "$work/sorted" "$work/$name" || exit 1
 	done
 	for resource in "$work/resources/"*; do

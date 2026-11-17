@@ -65,7 +65,7 @@ return baseclass.extend({
 			if (!object(state) || state.ok !== true)
 				throw new Error(_('The operation result is unavailable. Refresh status before retrying.'));
 			if (state.state === 'complete') {
-				if (!object(state.result) || (['status', 'doctor'].includes(name) ? state.result.schema !== 1 : state.result.ok !== true)) {
+				if (!object(state.result) || (['status', 'doctor'].includes(name) ? state.result.schema !== 2 : state.result.ok !== true)) {
 					if (object(state.result) && Object.prototype.hasOwnProperty.call(failures, state.result.code))
 						throw new Error(failures[state.result.code]);
 					throw new Error(_('The operation failed. Check diagnostics over SSH.'));

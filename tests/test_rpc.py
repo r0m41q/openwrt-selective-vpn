@@ -37,13 +37,12 @@ class RpcTests(unittest.TestCase):
             svpn_normalize_list() {{ printf '%s' "$2"; }}
             svpn_policy_destinations() {{ printf '%s' "$1"; }}
             svpn_state_id() {{ [ "$1" = valid-id ]; }}
-            svpn_setup_preview() {{ printf 'Safe scope\\n'; }}
             svpn_lifecycle() {{
                 printf '%s\\n' "$@" > "$test_root/lifecycle";
             }}
             svpn_tx_pointer() {{ printf 'valid-id\\n'; }}
             svpn_rules_save() {{ cat > "$test_root/saved"; }}
-            svpn_routing_preview_rules() {{
+            svpn_routing_preview() {{
                 printf '%s\\n' "$@" > "$test_root/previewed";
             }}
             svpn_profile_credentials() {{ cat > "$test_root/received"; }}
@@ -173,7 +172,7 @@ class RpcTests(unittest.TestCase):
         self.assertEqual(self.run_bridge("apply").returncode, 0)
         self.assertEqual(
             (self.root / "lifecycle").read_text().splitlines(),
-            ["apply-rules", "external", "client", "", "1", "192.168.1.2"],
+            ["apply", "external", "client", "", "1", "192.168.1.2"],
         )
         (self.stage / "peer").write_text("127.0.0.1")
         self.assertNotEqual(self.run_bridge("apply").returncode, 0)
