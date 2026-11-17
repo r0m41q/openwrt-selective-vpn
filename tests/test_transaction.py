@@ -104,14 +104,33 @@ uci() {
         self.addCleanup(self.cleanup)
 
     def cleanup(self):
+        groups = []
         if self.runtime.exists():
             for marker in self.runtime.glob("watch.*"):
                 try:
                     pid = int(marker.read_text())
                     os.killpg(pid, signal.SIGTERM)
+                    groups.append(pid)
                 except (ProcessLookupError, ValueError, PermissionError):
                     pass
-        self.temp.cleanup()
+        # wait for the watchers to exit before removing their files
+        deadline = time.monotonic() + 5
+        for pid in groups:
+            while time.monotonic() < deadline:
+                try:
+                    os.killpg(pid, 0)
+                except (ProcessLookupError, PermissionError):
+                    break
+                time.sleep(0.05)
+        # a late write can still race the removal, so retry briefly
+        for attempt in range(20):
+            try:
+                self.temp.cleanup()
+                return
+            except OSError:
+                if attempt == 19:
+                    raise
+                time.sleep(0.1)
 
     @staticmethod
     def write(path, value, mode=0o600):
