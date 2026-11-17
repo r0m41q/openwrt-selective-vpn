@@ -3,7 +3,7 @@
 		"description": "Access Selective VPN",
 		"read": {
 			"ubus": {
-				"selective-vpn": [ "job", "status", "doctor", "settings", "clients", "profiles", "leases", "profile_summary", "pending" ]
+				"selective-vpn": [ "job", "status", "doctor", "settings", "rules", "clients", "profiles", "leases", "profile_summary", "pending" ]
 			}
 		},
 		"write": {

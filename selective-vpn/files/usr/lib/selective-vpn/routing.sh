@@ -55,6 +55,38 @@ svpn_routing_leases() (
 	done < "$work/leases" | LC_ALL=C sort -u | head -n 64
 )
 
+# one line per generated policy: rule, preset, sources, destinations, protocols, ports
+# a rule without any destinations still gets a line so opt-outs stay visible
+svpn_routing_routes() (
+	[ "$#" -eq 1 ] && svpn_private_directory "$1" || exit 1
+	# rule name, preset id, then the row sources and the files from one directory
+	route() {
+		sources=$(tr '\n' ' ' < "$row/sources") || return 1
+		printf '%s\t%s\t%s' "$name" "$1" "${sources% }"
+		for file in destinations proto dest_port; do
+			value=$(tr '\n' ' ' < "$2/$file") || return 1
+			printf '\t%s' "${value% }"
+		done
+		printf '\n'
+	}
+	{
+		for row in "$1/global" "$1/"*; do
+			name=${row##*/}
+			if [ "$name" = global ]; then [ -z "${listed:-}" ] || continue; listed=1; fi
+			[ -d "$row/presets" ] || exit 1
+			presets=$(ls "$row/presets") || exit 1
+			if [ -n "$(cat "$row/destinations")" ] || [ -z "$presets" ]; then
+				route '' "$row" || exit 1
+			fi
+			for preset in $presets; do
+				route "$preset" "$row/presets/$preset" || exit 1
+			done
+		done
+	} > "$1/../routes" || exit 1
+	[ "$(wc -c < "$1/../routes")" -le 65536 ] || exit 1
+	cat "$1/../routes"
+)
+
 svpn_routing_preview() (
 	[ "$#" -eq 8 ] || exit 1
 	network='' policy=''
@@ -82,6 +114,10 @@ svpn_routing_preview() (
 		value=$(cat "$policy/$name") || exit 1
 		json_add_string "$name" "$value"
 	done
+	if [ -d "$policy/rules" ]; then
+		value=$(svpn_routing_routes "$policy/rules") || exit 1
+		json_add_string routes "$value"
+	fi
 	value=$(svpn_routing_digest "$network" "$policy") || exit 1
 	json_add_string review "$value"
 	value=$(while IFS= read -r warning; do

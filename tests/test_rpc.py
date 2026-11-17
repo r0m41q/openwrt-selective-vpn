@@ -42,6 +42,10 @@ class RpcTests(unittest.TestCase):
                 printf '%s\\n' "$@" > "$test_root/lifecycle";
             }}
             svpn_tx_pointer() {{ printf 'valid-id\\n'; }}
+            svpn_rules_save() {{ cat > "$test_root/saved"; }}
+            svpn_routing_preview_rules() {{
+                printf '%s\\n' "$@" > "$test_root/previewed";
+            }}
             svpn_profile_credentials() {{ cat > "$test_root/received"; }}
             """
         )
@@ -86,6 +90,7 @@ class RpcTests(unittest.TestCase):
                 "status",
                 "doctor",
                 "settings",
+                "rules",
                 "clients",
                 "profiles",
                 "leases",
@@ -156,65 +161,64 @@ class RpcTests(unittest.TestCase):
         self.field("profile", "x" * 32769)
         self.assertNotEqual(self.run_bridge("import_profile").returncode, 0)
 
-    def test_apply_rechecks_peer_and_boolean(self):
+    def test_apply_sends_only_reviewed_rule_arguments(self):
         for name, value in {
             "mode": "external",
             "selection": "client",
-            "console": "1",
-            "browser": "0",
-            "fallback": "0",
             "ack": "1",
             "peer": "192.168.1.2",
-            "scope": "lan",
             "review": "a" * 64,
         }.items():
             self.field(name, value)
         self.assertEqual(self.run_bridge("apply").returncode, 0)
         self.assertEqual(
             (self.root / "lifecycle").read_text().splitlines(),
-            [
-                "apply",
-                "external",
-                "client",
-                "",
-                "",
-                "1",
-                "0",
-                "0",
-                "",
-                "1",
-                "192.168.1.2",
-            ],
+            ["apply-rules", "external", "client", "", "1", "192.168.1.2"],
         )
         (self.stage / "peer").write_text("127.0.0.1")
         self.assertNotEqual(self.run_bridge("apply").returncode, 0)
         (self.stage / "peer").write_text("192.168.1.2")
-        marker = self.root / "unsafe"
-        (self.stage / "console").write_text(f"$(touch {marker})")
-        self.assertNotEqual(self.run_bridge("apply").returncode, 0)
-        self.assertFalse(marker.exists())
-
-    def test_explicit_scope_and_review_cannot_be_omitted(self):
-        for name, value in {
-            "mode": "external",
-            "selection": "client",
-            "console": "1",
-            "browser": "0",
-            "fallback": "0",
-            "ack": "1",
-            "peer": "192.168.1.2",
-            "scope": "devices",
-            "review": "a" * 64,
-        }.items():
-            self.field(name, value)
-        self.assertNotEqual(self.run_bridge("apply").returncode, 0)
-        (self.stage / "scope").write_text("lan")
         (self.stage / "review").write_text("")
         self.assertNotEqual(self.run_bridge("apply").returncode, 0)
         (self.stage / "review").write_text("a" * 64)
-        self.assertEqual(self.run_bridge("apply").returncode, 0)
-        self.field("devices", "192.168.1.2")
+        marker = self.root / "unsafe"
+        (self.stage / "networks").write_text(f"$(touch {marker})")
+        self.run_bridge("apply")
+        self.assertFalse(marker.exists())
+        (self.stage / "networks").unlink()
+        (self.stage / "ack").write_text("0")
         self.assertNotEqual(self.run_bridge("apply").returncode, 0)
+        (self.stage / "ack").write_text("1")
+        self.field("rules", "rule global\n")
+        self.assertNotEqual(self.run_bridge("apply").returncode, 0)
+        self.assertFalse(marker.exists())
+
+    def test_preview_saves_rows_from_the_staged_file(self):
+        for name, value in {
+            "mode": "external",
+            "selection": "client",
+            "ack": "1",
+            "peer": "192.168.1.2",
+            "rules": "rule global\npreset xcloud_native\n",
+        }.items():
+            self.field(name, value)
+        result = self.run_bridge("preview")
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertEqual(
+            (self.root / "saved").read_text(),
+            "rule global\npreset xcloud_native\n",
+        )
+        self.assertEqual(
+            (self.root / "previewed").read_text().splitlines(),
+            ["external", "client", ""],
+        )
+        (self.stage / "rules").write_text("rule global\x01\n")
+        self.assertNotEqual(self.run_bridge("preview").returncode, 0)
+        (self.stage / "rules").write_text("x" * 32769)
+        self.assertNotEqual(self.run_bridge("preview").returncode, 0)
+        (self.stage / "rules").write_text("rule global\n")
+        self.field("review", "a" * 64)
+        self.assertNotEqual(self.run_bridge("preview").returncode, 0)
 
     def test_credentials_are_stdin_only_and_id_is_bounded(self):
         bundle = self.root / "profiles/profile.abcdefgh"

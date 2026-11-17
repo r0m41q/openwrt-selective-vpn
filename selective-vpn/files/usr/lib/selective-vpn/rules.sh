@@ -177,3 +177,129 @@ svpn_rules_policies() (
 		svpn_policy_resource "$work" section "$target" missing < /dev/null || exit 1
 	done
 )
+
+# id, label and warning of every shipped preset
+svpn_preset_catalog() (
+	[ "$#" -eq 0 ] || exit 1
+	LC_ALL=C awk '
+		function flush() { if (id != "") print id "\t" v["label"] "\t" v["warning"] }
+		$1 == "preset" { flush(); id = $2; split("", v); next }
+		id != "" && ($1 == "label" || $1 == "warning") { key = $1; sub(/^[ \t]*[^ \t]+[ \t]*/, ""); v[key] = $0 }
+		END { flush() }' "$SVPN_LIBRARY_DIR/presets"
+)
+
+# draft rows in the same text form that svpn_rules_save reads, global first
+svpn_rules_draft() (
+	[ "$#" -eq 1 ] && svpn_private_directory "$1" || exit 1
+	svpn_config_file "$SVPN_CONFIG_DIR/selective-vpn" && svpn_uci_clean selective-vpn || exit 1
+	cp "$SVPN_CONFIG_DIR/selective-vpn" "$1/draft.source" || exit 1
+	svpn_uci_export "$1/draft.source" > "$1/draft.export" || exit 1
+	awk -v package=selective-vpn -f "$SVPN_LIBRARY_DIR/uci-inspect.awk" "$1/draft.export" > "$1/draft.table" || exit 1
+	LC_ALL=C awk -F '\t' '
+		$1 == "S" { if ($3 == "rule" && $4 != "-") { row[$2] = $4; order[++n] = $4 } }
+		$1 == "V" && ($2 in row) && $3 ~ /^(address|proto|dest_port|destinations|preset)$/ {
+			key = row[$2] SUBSEP $3
+			value[key] = value[key] == "" ? $4 : value[key] " " $4
+		}
+		function show(name,    i, k) {
+			print "rule " name
+			split("address proto dest_port destinations preset", keys, " ")
+			for (i = 1; i <= 5; i++) {
+				k = name SUBSEP keys[i]
+				if (value[k] != "") print keys[i] " " value[k]
+			}
+		}
+		END {
+			for (i = 1; i <= n; i++) if (order[i] == "global") show(order[i])
+			for (i = 1; i <= n; i++) if (order[i] != "global") show(order[i])
+		}' "$1/draft.table"
+)
+
+# replace the draft rows from stdin, live routing only changes on apply
+svpn_rules_save() (
+	[ "$#" -eq 1 ] && svpn_private_directory "$1" || exit 1
+	work=$1
+	if [ -e "$SVPN_PRIVATE_DIR/pending" ] || [ -L "$SVPN_PRIVATE_DIR/pending" ]; then
+		svpn_state_error 'Finish the pending change before editing rules.'; exit 1
+	fi
+	head -c 32769 > "$work/save.input" && [ "$(wc -c < "$work/save.input")" -le 32768 ] || exit 1
+	mkdir -m 700 "$work/save" || exit 1
+	count=$(LC_ALL=C awk -v dir="$work/save" '
+		function fail() { bad = 1; exit 1 }
+		NF == 0 { next }
+		$0 !~ /^[a-zA-Z0-9_. \/:-]*$/ { fail() }
+		$1 == "rule" { if (NF != 2 || seen[$2]++ || ++rows > 24) fail(); split("", got); next }
+		{
+			if (!rows || $1 !~ /^(address|proto|dest_port|destinations|preset)$/ || got[$1]++) fail()
+			value = $0
+			sub(/^[ \t]*[^ \t]+[ \t]*/, "", value)
+			print value > (dir "/" rows "." $1)
+			close(dir "/" rows "." $1)
+		}
+		END { if (bad || !rows) exit 1; print rows }' "$work/save.input") || exit 1
+	LC_ALL=C awk '$1 == "rule" { print $2 }' "$work/save.input" > "$work/save/names" || exit 1
+	field() { if [ -e "$work/save/$1.$2" ]; then cat "$work/save/$1.$2"; fi; }
+	i=0 global=0
+	: > "$work/save/addresses"
+	: > "$work/save/rules"
+	while IFS= read -r name; do
+		i=$((i + 1))
+		case "$name" in ''|*__*|svpn_*|[!a-zA-Z_]*|*[!a-zA-Z0-9_]*) svpn_state_error "Invalid rule name: $name"; exit 1 ;; esac
+		[ "${#name}" -le 40 ] || exit 1
+		address=$(field "$i" address) || exit 1
+		if [ "$name" = global ]; then
+			global=1
+			[ -z "$address" ] || exit 1
+		else
+			svpn_valid_ipv4 "$address" || { svpn_state_error "Invalid device address in rule $name."; exit 1; }
+			! grep -qxF "$address" "$work/save/addresses" || { svpn_state_error 'A device can only have one routing rule.'; exit 1; }
+			printf '%s\n' "$address" >> "$work/save/addresses"
+		fi
+		proto=$(svpn_rule_proto "$(field "$i" proto)") &&
+			ports=$(svpn_rule_ports "$(field "$i" dest_port)") &&
+			destinations=$(svpn_policy_destinations "$(field "$i" destinations)") &&
+			presets=$(svpn_normalize_list identifier "$(field "$i" preset)") || {
+			svpn_state_error "Invalid protocols, ports or destinations in rule $name."; exit 1;
+		}
+		for preset in $presets; do
+			svpn_preset_field "$preset" label > /dev/null || { svpn_state_error "Unknown routing preset: $preset"; exit 1; }
+		done
+		{
+			printf "config rule '%s'\n" "$name"
+			[ -z "$address" ] || printf "\toption address '%s'\n" "$address"
+			printf "\toption proto '%s'\n" "${proto% }"
+			ports=$(printf '%s' "$ports" | tr '\n' ' ')
+			[ -z "$ports" ] || printf "\toption dest_port '%s'\n" "${ports% }"
+			for value in $destinations; do printf "\tlist destinations '%s'\n" "$value"; done
+			for value in $presets; do printf "\tlist preset '%s'\n" "$value"; done
+		} >> "$work/save/rules"
+	done < "$work/save/names"
+	[ "$i" -eq "$count" ] && [ "$global" = 1 ] || { svpn_state_error 'The Global rule is required.'; exit 1; }
+	path=$SVPN_CONFIG_DIR/selective-vpn
+	svpn_config_file "$path" && svpn_uci_clean selective-vpn || exit 1
+	cp "$path" "$work/save/source" && chmod 600 "$work/save/source" || exit 1
+	svpn_uci_export "$work/save/source" > "$work/save/export" || exit 1
+	awk -v package=selective-vpn -f "$SVPN_LIBRARY_DIR/uci-inspect.awk" "$work/save/export" > "$work/save/table" || exit 1
+	# keep every other section as it is and replace the rule rows only
+	awk -F '\t' '$1 == "S" && $3 == "rule" { if ($4 == "-") exit 1; print $4 }' "$work/save/table" > "$work/save/old" || exit 1
+	# drop the package header like svpn_uci_record does so repeated saves match
+	awk 'NR == 1 && $1 == "package" { header = 1; next } header && NR == 2 && $0 == "" { next } { print }' \
+		"$work/save/export" > "$work/save/candidate" || exit 1
+	while IFS= read -r old; do
+		svpn_uci_record "selective-vpn.$old" replace "$work/save/candidate" /dev/null > "$work/save/next" &&
+			mv "$work/save/next" "$work/save/candidate" || exit 1
+	done < "$work/save/old"
+	cat "$work/save/rules" >> "$work/save/candidate" || exit 1
+	svpn_uci_export "$work/save/candidate" > "$work/save/checked" &&
+		awk -v package=selective-vpn -f "$SVPN_LIBRARY_DIR/uci-inspect.awk" "$work/save/checked" > /dev/null || {
+		svpn_state_error 'A rule name is already used by another section.'; exit 1;
+	}
+	! cmp -s "$work/save/candidate" "$path" || exit 0
+	mode=$(stat -c '%a' "$path") || exit 1
+	stage=$(mktemp "$SVPN_CONFIG_DIR/.selective-vpn.XXXXXXXX") || exit 1
+	trap 'rm -f -- "$stage"' EXIT
+	trap 'exit 1' HUP INT TERM
+	cat "$work/save/candidate" > "$stage" && chmod "$mode" "$stage" && sync || exit 1
+	svpn_uci_clean selective-vpn && cmp -s "$path" "$work/save/source" || exit 1
+	mv -f -- "$stage" "$path"
+)

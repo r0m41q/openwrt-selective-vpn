@@ -5,10 +5,9 @@ import { task } from 'uloop';
 
 const bridge = '/usr/lib/selective-vpn/rpc-bridge';
 const limits = {
-	mode: 8, selection: 64, networks: 4096, devices: 4096,
-	console: 1, browser: 1, fallback: 1, custom: 4096,
+	mode: 8, selection: 64, networks: 4096, rules: 32768,
 	ack: 1, peer: 15, profile: 32768, username: 127,
-	password: 127, id: 64, scope: 7, review: 64
+	password: 127, id: 64, review: 64
 };
 
 function invoke(operation, args) {
@@ -107,10 +106,6 @@ function method(operation, args) {
 	} };
 }
 
-const settings = {
-	mode: '', selection: '', networks: '', devices: '', console: '',
-	browser: '', fallback: '', custom: '', ack: '', peer: '', scope: '', review: ''
-};
 
 return {
 	'selective-vpn': {
@@ -125,6 +120,7 @@ return {
 		status: method('status', {}),
 		doctor: method('doctor', {}),
 		settings: method('settings', {}),
+		rules: method('rules', {}),
 		clients: method('clients', {}),
 		profiles: method('profiles', {}),
 		leases: method('leases', {}),
@@ -132,8 +128,8 @@ return {
 		pending: method('pending', {}),
 		import_profile: method('import_profile', { profile: '' }),
 		set_credentials: method('set_credentials', { id: '', username: '', password: '' }),
-		preview: method('preview', settings),
-		apply: method('apply', settings),
+		preview: method('preview', { mode: '', selection: '', networks: '', rules: '', ack: '', peer: '' }),
+		apply: method('apply', { mode: '', selection: '', networks: '', ack: '', peer: '', review: '' }),
 		confirm: method('confirm', { id: '' }),
 		reconnect: method('reconnect', { peer: '' }),
 		enable: method('enable', { peer: '' }),

@@ -70,14 +70,9 @@ class RoutingTests(unittest.TestCase):
             mode="managed",
             selection="profile.ABC12345",
             networks="",
-            devices="",
-            console="1",
-            browser="0",
-            fallback="0",
-            custom="",
+            rules="rule global\npreset xcloud_native\n",
             ack="1",
             peer="192.168.8.2",
-            scope="lan",
         )
 
     def request(self, operation, check=True, **fields):
@@ -100,59 +95,98 @@ class RoutingTests(unittest.TestCase):
             return json.loads(result.stdout)
         return result
 
-    def preview(self, **changes):
-        return self.request("preview", **(self.options | changes))
+    def preview(self, check=True, **changes):
+        return self.request("preview", check=check, **(self.options | changes))
 
-    def test_domain_preview_is_stable_private_and_does_not_mutate(self):
-        before = {path: path.read_bytes() for path in self.f.config.iterdir()}
+    def apply(self, review, check=True):
+        options = {k: v for k, v in self.options.items() if k != "rules"}
+        return self.request("apply", check=check, **options, review=review)
+
+    def routes(self, result):
+        return [line.split("\t") for line in result["routes"].splitlines()]
+
+    def test_preview_saves_only_the_draft_and_is_stable(self):
+        config = self.f.config / "selective-vpn"
+        before = {
+            path: path.read_bytes()
+            for path in self.f.config.iterdir()
+            if path != config
+        }
         first = self.preview()
+        saved = config.read_bytes()
         second = self.preview()
         self.assertTrue(first["ok"])
+        self.assertEqual(config.read_bytes(), saved)
         self.assertEqual(first["review"], second["review"])
+        self.assertIn(b"list preset 'xcloud_native'", saved)
         self.assertRegex(first["review"], r"^[a-f0-9]{64}$")
-        self.assertEqual(first["sources"], "192.168.8.0/24")
+        self.assertEqual(
+            self.routes(first),
+            [
+                [
+                    "global",
+                    "xcloud_native",
+                    "192.168.8.0/24",
+                    "xsts.auth.xboxlive.com "
+                    "xgpuconsole.gssv-play-prod.xboxlive.com",
+                    "tcp",
+                    "443",
+                ]
+            ],
+        )
         self.assertEqual(first["lan_networks"], "lan")
         self.assertEqual(first["dns"], "dnsmasq.nftset")
-        self.assertIn("xsts.auth.xboxlive.com", first["destinations"])
         self.assertNotIn("OLD_SECRET", json.dumps(first))
         for path, content in before.items():
             self.assertEqual(path.read_bytes(), content)
         self.assertFalse((self.f.store / "pending").exists())
         self.assertFalse(list(self.f.runtime.glob("network.*")))
         self.assertFalse(list(self.f.runtime.glob("policy.*")))
-
-    def test_selected_devices_and_both_modes_have_exact_sources(self):
-        result = self.preview(
-            scope="devices",
-            devices="device\n192.168.8.13",
-            browser="1",
-            custom="example.org 198.51.100.0/24",
-        )
-        self.assertTrue(result["ok"])
-        self.assertEqual(result["scope"], "devices")
+        rules = self.request("rules")
         self.assertEqual(
-            result["sources"].splitlines(), ["192.168.8.12", "192.168.8.13"]
+            rules["rules"], "rule global\nproto tcp udp\npreset xcloud_native"
         )
-        self.assertIn(
-            "xgpuweb.gssv-play-prod.xboxlive.com", result["destinations"]
-        )
-        self.assertIn("198.51.100.0/24", result["destinations"])
-        addresses = "\n".join(
-            f"192.168.8.{number}" for number in range(10, 42)
-        )
-        result = self.preview(scope="devices", devices=addresses, fallback="1")
-        self.assertTrue(result["ok"])
-        self.assertEqual(len(result["sources"].splitlines()), 32)
+        self.assertIn("xcloud_web\txCloud web\t", rules["presets"])
 
-    def test_empty_invalid_or_outside_devices_never_broaden_scope(self):
-        for devices in ("", " \n", "999.1.1.1", "$(id)", "203.0.113.99"):
-            result = self.request(
-                "preview",
-                check=False,
-                **(self.options | dict(scope="devices", devices=devices)),
-            )
+    def test_device_rules_replace_global_with_exact_sources(self):
+        result = self.preview(
+            rules="rule global\npreset xcloud_native xcloud_web\n"
+            "rule phone\naddress 192.168.8.12\nproto udp\ndest_port 53\n"
+            "destinations example.org 198.51.100.0/24\n"
+            "rule tv\naddress 192.168.8.13\n"
+        )
+        self.assertTrue(result["ok"])
+        routes = self.routes(result)
+        self.assertEqual(
+            [route[:2] for route in routes],
+            [
+                ["global", "xcloud_native"],
+                ["global", "xcloud_web"],
+                ["phone", ""],
+                ["tv", ""],
+            ],
+        )
+        self.assertNotIn("192.168.8.0/24", routes[0][2].split())
+        self.assertIn("192.168.8.128/25", routes[0][2].split())
+        self.assertEqual(
+            routes[2][2:],
+            ["192.168.8.12", "example.org 198.51.100.0/24", "udp", "53"],
+        )
+        self.assertEqual(routes[3][2:], ["192.168.8.13", "", "tcp udp", ""])
+
+    def test_invalid_or_outside_devices_never_broaden_scope(self):
+        for rules in (
+            "rule phone\naddress 192.168.8.12\n",
+            "rule global\nrule phone\naddress 999.1.1.1\n",
+            "rule global\nrule phone\naddress $(id)\n",
+            "rule global\nrule phone\naddress 203.0.113.99\n"
+            "destinations 8.8.8.8\n",
+            "rule global\nrule a\naddress 192.168.8.12\n"
+            "rule b\naddress 192.168.8.12\n",
+        ):
+            result = self.preview(check=False, rules=rules)
             if result.returncode == 0:
-                self.assertFalse(json.loads(result.stdout)["ok"])
+                self.assertFalse(json.loads(result.stdout)["ok"], rules)
             self.assertFalse((self.f.store / "pending").exists())
 
     def test_dns_and_reserved_resource_conflicts_block_preview(self):
@@ -160,7 +194,8 @@ class RoutingTests(unittest.TestCase):
         result = self.preview()
         self.assertFalse(result["ok"])
         self.assertEqual(result["code"], "dns_policy")
-        self.assertTrue(self.preview(fallback="1")["ok"])
+        static = "rule global\npreset xcloud_native_static\n"
+        self.assertTrue(self.preview(rules=static)["ok"])
         (self.root / "no-nftset").unlink()
         path = self.f.config / "network"
         path.write_text(
@@ -193,20 +228,28 @@ class RoutingTests(unittest.TestCase):
         )
 
     def test_stale_review_is_refused_before_any_network_mutation(self):
-        options = self.options | dict(fallback="1")
-        review = self.request("preview", **options)["review"]
+        self.options["rules"] = "rule global\npreset xcloud_native_static\n"
+        review = self.preview()["review"]
         path = self.f.config / "network"
         path.write_text(path.read_text() + "\n# a later edit\n")
-        result = self.request("apply", check=False, **options, review=review)
+        result = self.apply(review, check=False)
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((self.f.store / "pending").exists())
         self.assertNotIn("openvpn start", (self.root / "calls").read_text())
-        review = self.request("preview", **options)["review"]
-        applied = self.request("apply", **options, review=review)
+        review = self.preview()["review"]
+        applied = self.apply(review)
         pending = self.request("pending")
         self.assertEqual(pending["id"], applied["id"])
         self.assertEqual(pending["state"], "awaiting_confirmation")
         self.assertGreater(pending["seconds_remaining"], 0)
         self.assertLessEqual(pending["seconds_remaining"], 120)
+        draft = (self.f.config / "selective-vpn").read_bytes()
+        result = self.preview(rules="rule global\n")
+        self.assertEqual(result["code"], "rules")
+        self.assertEqual((self.f.config / "selective-vpn").read_bytes(), draft)
         self.request("confirm", id=applied["id"])
         self.assertEqual(self.request("pending")["id"], "")
+        self.assertIn(
+            "svpn_route_global__xcloud_native_static",
+            (self.f.config / "pbr").read_text(),
+        )

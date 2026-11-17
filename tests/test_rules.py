@@ -319,6 +319,89 @@ class RuleTests(unittest.TestCase):
             self.reject(rule("global", presets=preset))
         self.reject(DEFAULT + rule("my__phone", "192.168.8.12"))
 
+    def save(self, text, check=True):
+        draft = self.p.f.root / "draft.txt"
+        draft.write_text(text)
+        return self.p.call(
+            'work=$(mktemp -d "$(svpn_runtime_directory)/t.XXXXXX")\n'
+            'svpn_rules_save "$work" < "$1"\nsvpn_rules_draft "$work"',
+            draft,
+            check=check,
+        )
+
+    def test_saved_rows_replace_only_rule_sections(self):
+        self.configure(DEFAULT + rule("old", "192.168.8.20", "1.1.1.1"))
+        result = self.save(
+            "rule phone\naddress 192.168.8.12\npreset xcloud_native\n"
+            "rule global\nproto tcp\ndest_port 443 8000-8010\n"
+            "destinations example.com 8.8.8.8\npreset xcloud_web\n"
+        )
+        self.assertEqual(
+            result.stdout.decode(),
+            "rule global\nproto tcp\ndest_port 443 8000-8010\n"
+            "destinations example.com 8.8.8.8\npreset xcloud_web\n"
+            "rule phone\naddress 192.168.8.12\nproto tcp udp\n"
+            "preset xcloud_native\n",
+        )
+        text = self.config.read_text()
+        self.assertIn("option enabled '0'", text)
+        self.assertNotIn("old", text)
+        plan = self.plan()
+        routes = self.p.call(
+            '. "$SVPN_LIBRARY_DIR/routing.sh"; svpn_routing_routes "$1"',
+            plan / "rules",
+        ).stdout.decode()
+        lines = [line.split("\t") for line in routes.splitlines()]
+        self.assertEqual(
+            [line[:2] for line in lines],
+            [
+                ["global", ""],
+                ["global", "xcloud_web"],
+                ["phone", "xcloud_native"],
+            ],
+        )
+        self.assertEqual(
+            lines[0][3:], ["example.com 8.8.8.8", "tcp", "443 8000-8010"]
+        )
+        self.assertEqual(lines[2][2:], ["192.168.8.12", NATIVE, "tcp", "443"])
+
+    def test_invalid_rows_leave_the_draft_unchanged(self):
+        self.configure(DEFAULT)
+        before = self.config.read_bytes()
+        for text in (
+            "rule phone\naddress 192.168.8.12\n",
+            "rule global\nrule global\n",
+            "rule global\naddress 192.168.8.12\n",
+            "rule global\nrule a\naddress 192.168.8.12\n"
+            "rule b\naddress 192.168.8.12\n",
+            "rule global\nrule my__phone\naddress 192.168.8.12\n",
+            "rule global\nrule main\naddress 192.168.8.12\n",
+            "rule global\nrule svpn_x\naddress 192.168.8.12\n",
+            "rule global\npreset xbox_native\n",
+            "rule global\nproto icmp\n",
+            "rule global\ndest_port 0\n",
+            "rule global\ndestinations 0.0.0.0/0\n",
+            "rule global\ndestinations a.com'\n",
+            "rule global\nproto tcp\nproto udp\n",
+            "rule global\nlabel x\n",
+        ):
+            result = self.save(text, check=False)
+            self.assertNotEqual(result.returncode, 0, text)
+            self.assertEqual(self.config.read_bytes(), before, text)
+
+    def test_empty_device_rows_are_listed_as_opt_outs(self):
+        self.save(
+            "rule global\npreset xcloud_native\n"
+            "rule tv\naddress 192.168.8.30\n"
+        )
+        plan = self.plan()
+        routes = self.p.call(
+            '. "$SVPN_LIBRARY_DIR/routing.sh"; svpn_routing_routes "$1"',
+            plan / "rules",
+        ).stdout.decode()
+        self.assertIn("tv\t\t192.168.8.30\t\ttcp udp\t\n", routes)
+        self.assertNotIn("global\t\t", routes)
+
     def test_reserved_route_section_requires_journal_ownership(self):
         extra = "config policy 'svpn_route_global'\n"
         self.p.pbr(extra=extra + " option interface 'wan'\n")

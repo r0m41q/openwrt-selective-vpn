@@ -259,48 +259,69 @@ test('reconnect failure does not offer confirmation', async () => {
 
 const routingLogic = () => load('selective-vpn/routing.js', { baseclass: { extend: value => value } });
 const vpnSelection = { mode: 'managed', selection: 'profile.abcdefgh' };
-const routingForm = changes => ({ scope: 'lan', networks: '', devices: '', console: true, browser: false,
-	fallback: false, custom: '', ack: true, peer: '192.168.8.2', ...changes });
-const reviewResult = changes => ({ scope: 'lan', sources: '192.168.8.0/24', lan_networks: 'lan',
-	lan_subnets: '192.168.8.0/24', interface: 'svpn_vpn', dns: 'dnsmasq.nftset',
-	destinations: 'xsts.auth.xboxlive.com', warnings: '', review: 'a'.repeat(64), ...changes });
+const presetText = 'xcloud_native\txCloud native\t\nxcloud_native_static\txCloud native static IPs (experimental)\tstatic_console_addresses_may_be_outdated\n';
+const ruleRow = changes => ({ name: 'global', address: '', presets: [], destinations: '', tcp: true, udp: true, ports: '', ...changes });
+const routingForm = changes => ({ networks: '', ack: true, peer: '192.168.8.2', ...changes });
+const reviewResult = changes => ({ lan_networks: 'lan', lan_subnets: '192.168.8.0/24', interface: 'svpn_vpn',
+	dns: 'dnsmasq.nftset', warnings: '', review: 'a'.repeat(64),
+	routes: 'global\t\t192.168.8.0/25 192.168.8.128/26\texample.org\ttcp udp\t\n' +
+		'global\txcloud_native\t192.168.8.0/25\txsts.auth.xboxlive.com\ttcp\t443', ...changes });
+const optOut = '\ntv\t\t192.168.8.30\t\ttcp udp\t';
+const texts = node => typeof node === 'string' ? [node] : (node.children || []).flatMap(texts);
 
-test('routing options preserve explicit scope, normalize devices and keep modes independent', () => {
+test('saved rules load global first and serialize back with presets and ports', () => {
 	const logic = routingLogic();
-	let args = logic.options(routingForm({ devices: 'hidden old value' }), vpnSelection);
-	assert.equal(args[3], '');
-	assert.deepEqual(Array.from(args.slice(4, 7)), ['1', '0', '0']);
-	args = logic.options(routingForm({ scope: 'devices', devices: 'DEVICE\n192.168.8.12 DEVICE', browser: true }), vpnSelection);
-	assert.equal(args[3], 'device\n192.168.8.12');
-	assert.deepEqual(Array.from(args.slice(4, 7)), ['1', '1', '0']);
-	assert.equal(args[10], 'devices');
-	args = logic.options(routingForm({ console: false, browser: true, fallback: true }), vpnSelection);
-	assert.deepEqual(Array.from(args.slice(4, 7)), ['0', '1', '0']);
-	args = logic.options(routingForm({ console: false, custom: 'EXAMPLE.ORG 198.51.100.0/24' }), vpnSelection);
-	assert.equal(args[7], 'example.org\n198.51.100.0/24');
+	const presets = logic.catalog(presetText + 'bad id\tx\t\n');
+	assert.deepEqual(Array.from(presets, preset => preset.id), ['xcloud_native', 'xcloud_native_static']);
+	const rows = logic.rows('rule tv\naddress 192.168.8.30\nproto udp\n', presets);
+	assert.equal(rows[0].name, 'global');
+	assert.equal(rows[1].udp, true);
+	assert.equal(rows[1].tcp, false);
+	const text = logic.serialize([ruleRow({ presets: ['xcloud_native', 'unknown'], destinations: 'EXAMPLE.ORG\n198.51.100.0/24', tcp: true, udp: false, ports: '443 8000-8010' }),
+		ruleRow({ name: 'tv', address: '192.168.8.30' })], presets);
+	assert.equal(text, 'rule global\nproto tcp\ndest_port 443 8000-8010\ndestinations example.org 198.51.100.0/24\npreset xcloud_native\n' +
+		'rule tv\naddress 192.168.8.30\nproto tcp udp\n');
+	assert.deepEqual(Array.from(logic.rows(text, presets), row => row.name), ['global', 'tv']);
+	assert.throws(() => logic.rows('rule $(id)\n', presets), /could not be read/);
+	assert.throws(() => logic.rows('address 192.168.8.30\n', presets), /could not be read/);
 });
 
-test('empty selected-device lists and invalid routing fields are rejected', () => {
+test('invalid rules and routing fields are rejected before any request', () => {
 	const logic = routingLogic();
-	for (const changes of [
-		{ scope: 'devices', devices: '' }, { scope: 'devices', devices: ' \n' },
-		{ scope: 'devices', devices: '999.1.1.1' }, { scope: 'devices', devices: '$(id)' },
-		{ networks: 'lan;id' }, { custom: '0.0.0.0/0' }, { custom: '192.168.8.3/24' },
-		{ custom: '*.example.org' }, { console: false, browser: false }, { ack: false },
-		{ peer: 'not-an-address' }, { scope: 'devices', devices: 'x'.repeat(4097) }
-	]) assert.throws(() => logic.options(routingForm(changes), vpnSelection));
-	assert.throws(() => logic.options(routingForm(), {}), /Choose a VPN/);
+	const presets = logic.catalog(presetText);
+	const device = changes => ruleRow({ name: 'tv', address: '192.168.8.30', ...changes });
+	for (const rows of [
+		[device()], [ruleRow(), device({ name: 'my__tv' })], [ruleRow(), device({ name: 'svpn_tv' })],
+		[ruleRow(), device({ name: 'main' })], [ruleRow(), device({ name: 'global' })], [ruleRow(), device({ name: '' })],
+		[ruleRow(), device({ address: '999.1.1.1' })], [ruleRow(), device(), device({ name: 'tv2' })],
+		[ruleRow(), device(), device()], [ruleRow({ tcp: false, udp: false })], [ruleRow({ ports: '0' })],
+		[ruleRow({ ports: '70000' })], [ruleRow({ ports: '10-5' })], [ruleRow({ destinations: '0.0.0.0/0' })],
+		[ruleRow({ destinations: '$(id)' })], [ruleRow({ destinations: 'x'.repeat(4097) })],
+		[ruleRow(), ...Array.from({ length: 24 }, (_, i) => device({ name: 'd' + i, address: '192.168.8.' + (i + 10) }))]
+	]) assert.throws(() => logic.options(routingForm(), vpnSelection, rows, presets));
+	for (const changes of [{ networks: 'lan;id' }, { ack: false }, { peer: 'not-an-address' }])
+		assert.throws(() => logic.options(routingForm(changes), vpnSelection, [ruleRow()], presets));
+	assert.throws(() => logic.options(routingForm(), {}, [ruleRow()], presets), /Choose a VPN/);
+	const args = logic.options(routingForm(), vpnSelection, [ruleRow()], presets);
+	assert.deepEqual(Array.from(args), ['managed', 'profile.abcdefgh', '', 'rule global\nproto tcp udp\n', '1', '192.168.8.2']);
 });
 
 test('malformed previews cannot authorize apply', () => {
 	const logic = routingLogic();
-	const args = logic.options(routingForm(), vpnSelection);
-	for (const changes of [{ review: '' }, { scope: 'devices' }, { sources: '' },
-		{ sources: '0.0.0.0/0' }, { destinations: '$(id)' }, { dns: 'unsupported' }])
+	const presets = logic.catalog(presetText);
+	const args = logic.options(routingForm(), vpnSelection, [ruleRow(), ruleRow({ name: 'tv', address: '192.168.8.30' })], presets);
+	assert.equal(logic.preview(reviewResult({ routes: reviewResult().routes + optOut }), args).routes.length, 3);
+	for (const changes of [{ review: '' }, { routes: '' }, { routes: undefined }, { dns: 'unsupported' },
+		{ routes: 'phone\t\t192.168.8.12\t\ttcp\t' }, { routes: 'global\t\t0.0.0.0/0\t\ttcp\t' },
+		{ routes: 'global\t\t192.168.8.0/24\t$(id)\ttcp\t' }, { routes: 'global\tBad__id\t192.168.8.0/24\t\ttcp\t' },
+		{ routes: 'global\t\t192.168.8.0/24\t\ticmp\t' }, { routes: 'global\t\t192.168.8.0/24\t\ttcp' }])
 		assert.throws(() => logic.preview(reviewResult(changes), args));
 });
 
-function routingFixture(handler = () => {}, writable = true, data = [{}, { leases: '192.168.8.12\tdevice' }, { id: '' }]) {
+const routingData = changes => [{}, { leases: '192.168.8.12\tXbox-One\n192.168.8.13\t-\n' }, { id: '' },
+	{ rules: 'rule global\npreset xcloud_native\ndestinations example.org\n', presets: presetText }, ...(changes || [])];
+
+function routingFixture(handler = () => {}, writable = true, data = routingData()) {
 	const calls = [];
 	const events = {};
 	const timers = new Map();
@@ -328,25 +349,47 @@ function routingFixture(handler = () => {}, writable = true, data = [{}, { lease
 	} };
 }
 
-test('routing defaults to all LAN, console on, browser off and adds only chosen DHCP addresses', async () => {
+test('new device rules copy Global and take names from DHCP hostnames', async () => {
 	const f = routingFixture(() => reviewResult());
-	assert.equal(f.view.scope.value, 'lan');
-	assert.equal(f.view.console.checked, true);
-	assert.equal(f.view.browser.checked, false);
-	assert.equal(f.view.devices.value, '');
+	assert.equal(f.view.rows.length, 1);
 	assert.equal(f.view.applyButton.disabled, true);
-	f.view.scope.value = 'devices';
 	f.view.suggestions.value = '192.168.8.12';
-	await f.view.addDevice.events.click();
-	assert.equal(f.view.devices.value, '192.168.8.12');
+	await f.view.run(() => f.view.addDevice());
+	assert.deepEqual({ ...f.view.rows[1], presets: Array.from(f.view.rows[1].presets) }, { name: 'xbox_one', address: '192.168.8.12',
+		presets: ['xcloud_native'], destinations: 'example.org', tcp: true, udp: true, ports: '' });
+	f.view.rows[0].presets.push('xcloud_native_static');
+	assert.deepEqual(Array.from(f.view.rows[1].presets), ['xcloud_native']);
+	f.view.manual.value = '192.168.8.40';
+	await f.view.run(() => f.view.addDevice());
+	assert.equal(f.view.rows[2].name, 'device_192_168_8_40');
+	f.view.manual.value = '192.168.8.40';
+	await f.view.run(() => f.view.addDevice());
+	assert.equal(f.view.rows.length, 3);
+	assert.match(f.view.feedback.textContent, /only have one routing rule/);
 	assert.ok(!f.calls.length);
 	assert.ok(descendants(f.root).every(node => node.innerHTML === undefined));
 });
 
-test('preview errors for unsupported DNS and conflicts keep apply disabled', async () => {
-	for (const code of ['vpn_scope', 'dns_policy']) {
+test('preview sends the rule rows and lists every route, including opt-outs', async () => {
+	const f = routingFixture(() => reviewResult({ routes: reviewResult().routes + optOut }));
+	f.view.manual.value = '192.168.8.30';
+	await f.view.run(() => f.view.addDevice());
+	f.view.rows[1].name = 'tv';
+	f.view.rows[1].presets = [];
+	f.view.rows[1].destinations = '';
+	await f.view.run(() => f.view.preview());
+	const sent = f.calls.find(call => call[0] === 'preview');
+	assert.equal(sent[4], 'rule global\nproto tcp udp\ndestinations example.org\npreset xcloud_native\nrule tv\naddress 192.168.8.30\nproto tcp udp\n');
+	assert.equal(f.view.applyButton.disabled, false);
+	const text = texts(f.view.previewArea).join('|');
+	assert.match(text, /Global · xCloud native\|192\.168\.8\.0\/25\|xsts\.auth\.xboxlive\.com\|TCP ports 443/);
+	assert.match(text, /tv\|192\.168\.8\.30\|None, normal connection/);
+});
+
+test('preview errors keep apply disabled', async () => {
+	for (const code of ['rules', 'vpn_scope', 'dns_policy']) {
 		const api = apiFixture(method => method === 'job' ? { ok: true, state: 'complete', result: { ok: false, code, error: 'private-secret' } } : { ok: true, job: '1' }).api;
-		await assert.rejects(api.call('preview'), error => /Preview failed/.test(error.message) && !error.message.includes('private-secret'));
+		await assert.rejects(api.call('preview'), error => /could not be saved|Preview failed/.test(error.message) && !error.message.includes('private-secret'));
 	}
 	const f = routingFixture(() => { throw new Error('Preview failed. Check DNS.'); });
 	await f.view.run(() => f.view.preview());
@@ -354,24 +397,28 @@ test('preview errors for unsupported DNS and conflicts keep apply disabled', asy
 	assert.ok(!f.calls.some(call => call[0] === 'apply'));
 });
 
-test('empty selected devices do not send preview or apply requests', async () => {
+test('invalid rows do not send preview or apply requests', async () => {
 	const f = routingFixture(() => reviewResult());
-	f.view.scope.value = 'devices'; f.view.devices.value = ' \n';
+	f.view.rows[0].tcp = false; f.view.rows[0].udp = false;
 	await f.view.run(() => f.view.preview());
 	await f.view.run(() => f.view.apply());
 	assert.equal(f.calls.length, 0);
-	assert.equal(f.view.scope.value, 'devices');
+	assert.match(f.view.feedback.textContent, /Preview the current rules/);
 });
 
-test('edits invalidate preview and apply also checks values without input events', async () => {
+test('edits invalidate preview and apply also checks rows without input events', async () => {
 	const f = routingFixture(() => reviewResult());
 	await f.view.run(() => f.view.preview());
 	assert.equal(f.view.applyButton.disabled, false);
-	f.view.custom.value = 'example.org';
-	f.view.custom.events.input();
+	f.view.networks.value = 'lan';
+	f.view.networks.events.input();
 	assert.equal(f.view.applyButton.disabled, true);
 	await f.view.run(() => f.view.preview());
-	f.view.browser.checked = true;
+	f.view.rows[0].destinations = 'example.net';
+	await f.view.run(() => f.view.apply());
+	assert.ok(!f.calls.some(call => call[0] === 'apply'));
+	await f.view.run(() => f.view.preview());
+	f.view.rows[0].presets.push('xcloud_native_static');
 	await f.view.run(() => f.view.apply());
 	assert.ok(!f.calls.some(call => call[0] === 'apply'));
 });
@@ -384,10 +431,10 @@ test('apply sends reviewed arguments and requires confirmation of the returned t
 	await f.view.run(() => f.view.preview());
 	await f.view.run(() => f.view.apply());
 	const applied = f.calls.find(call => call[0] === 'apply');
-	assert.equal(applied.at(-1), 'a'.repeat(64));
-	assert.equal(applied[11], 'lan');
+	assert.deepEqual(applied.slice(1), ['managed', 'profile.abcdefgh', '', '1', '192.168.8.2', 'a'.repeat(64)]);
 	assert.equal(f.view.confirmButton.disabled, false);
 	assert.equal(f.view.previewButton.disabled, true);
+	assert.ok(f.view.rowInputs.every(node => node.disabled));
 	await f.view.run(() => f.view.confirm());
 	assert.ok(f.calls.some(call => call[0] === 'confirm' && call[1] === id));
 	assert.equal(f.view.pending.id, '');
@@ -396,7 +443,8 @@ test('apply sends reviewed arguments and requires confirmation of the returned t
 
 test('expired confirmation and navigation stop the countdown without confirming', async () => {
 	const pending = { id: 'b'.repeat(32), state: 'awaiting_confirmation', seconds_remaining: 2 };
-	const f = routingFixture(() => {}, true, [{}, null, pending]);
+	const data = routingData(); data[2] = pending;
+	const f = routingFixture(() => {}, true, data);
 	assert.equal(f.view.confirmButton.disabled, false);
 	f.advance(3);
 	assert.equal(f.view.confirmButton.disabled, true);
@@ -422,12 +470,16 @@ test('lost apply responses recover pending state and never retry apply automatic
 	assert.match(f.view.feedback.textContent, /result was lost/);
 });
 
-test('readonly and unavailable recovery status disable routing mutations', () => {
-	for (const [writable, data] of [[false, [{}, null, { id: '' }]], [true, [{}, null, null]]]) {
+test('readonly, unreadable rules and unavailable recovery status disable routing mutations', () => {
+	const broken = routingData(); broken[3] = { rules: 'rule $(id)\n', presets: presetText };
+	const missing = routingData(); missing[2] = null;
+	const empty = routingData(); empty[3] = null;
+	for (const [writable, data] of [[false, routingData()], [true, missing], [true, broken], [true, empty]]) {
 		const f = routingFixture(() => {}, writable, data);
 		assert.equal(f.view.previewButton.disabled, true);
 		assert.equal(f.view.applyButton.disabled, true);
 		assert.equal(f.view.confirmButton.disabled, true);
+		assert.ok(f.view.rowInputs.every(node => node.disabled));
 	}
 });
 

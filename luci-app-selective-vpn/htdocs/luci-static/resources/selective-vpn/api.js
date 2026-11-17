@@ -3,16 +3,17 @@
 'require rpc';
 
 const parameters = {
-	settings: [], clients: [], profiles: [], leases: [], status: [], doctor: [], pending: [],
+	settings: [], rules: [], clients: [], profiles: [], leases: [], status: [], doctor: [], pending: [],
 	profile_summary: ['id'], import_profile: ['profile'],
 	set_credentials: ['id', 'username', 'password'],
 	reconnect: ['peer'], enable: ['peer'], disable: ['peer'], rollback: ['peer'], confirm: ['id']
 };
-parameters.preview = ['mode', 'selection', 'networks', 'devices', 'console', 'browser', 'fallback', 'custom', 'ack', 'peer', 'scope'];
-parameters.apply = parameters.preview.concat('review');
+parameters.preview = ['mode', 'selection', 'networks', 'rules', 'ack', 'peer'];
+parameters.apply = ['mode', 'selection', 'networks', 'ack', 'peer', 'review'];
 const failures = {
+	rules: _('The rules could not be saved. Check names, device addresses, destinations and ports, and finish any pending change first.'),
 	vpn_scope: _('Preview failed. Check the VPN profile and credentials, selected LAN networks and devices, and existing VPN or firewall conflicts.'),
-	dns_policy: _('Preview failed. Check dnsmasq nftset support, client DNS settings and existing PBR policy conflicts.')
+	dns_policy: _('Preview failed. Check that each device is on a selected LAN, dnsmasq nftset support, client DNS settings and existing PBR policy conflicts.')
 };
 const methods = {};
 Object.keys(parameters).forEach(name => {

@@ -8,7 +8,7 @@ set -eu
 operation=$1
 stage=$2
 case "$operation" in
-	status|doctor|settings|clients|profiles|leases|profile_summary|pending|import_profile|set_credentials|preview|apply|confirm|reconnect|enable|disable|rollback|uninstall) ;;
+	status|doctor|settings|rules|clients|profiles|leases|profile_summary|pending|import_profile|set_credentials|preview|apply|confirm|reconnect|enable|disable|rollback|uninstall) ;;
 	*) exit 1 ;;
 esac
 case "$stage" in /tmp/selective-vpn-rpc.[a-zA-Z0-9][a-zA-Z0-9][a-zA-Z0-9][a-zA-Z0-9][a-zA-Z0-9][a-zA-Z0-9]) ;; *) exit 1 ;; esac
@@ -18,7 +18,8 @@ case "$operation" in
 	profile_summary|confirm) allowed=' id ' ;;
 	import_profile) allowed=' profile ' ;;
 	set_credentials) allowed=' id username password ' ;;
-	preview|apply) allowed=' mode selection networks devices console browser fallback custom ack peer scope review ' ;;
+	preview) allowed=' mode selection networks rules ack peer ' ;;
+	apply) allowed=' mode selection networks ack peer review ' ;;
 	reconnect|enable|disable|rollback|uninstall) allowed=' peer ' ;;
 	*) allowed=' ' ;;
 esac
@@ -29,9 +30,10 @@ for input in "$stage"/* "$stage"/.[!.]* "$stage"/..?*; do
 	svpn_private_file "$input" || exit 1
 	case "$name" in
 		profile) limit=32768 ;;
-		networks|devices|custom) limit=4096 ;;
+		rules) limit=32768 ;;
+		networks) limit=4096 ;;
 		username|password) limit=127 ;;
-		console|browser|fallback|ack) limit=1 ;;
+		ack) limit=1 ;;
 		mode) limit=8 ;;
 		peer) limit=15 ;;
 		*) limit=64 ;;
@@ -40,7 +42,7 @@ for input in "$stage"/* "$stage"/.[!.]* "$stage"/..?*; do
 	if [ "$name" != profile ]; then
 		# reject control bytes before command substitution can strip them
 		case "$name" in
-			networks|devices|custom) printable='\12\40-\176\200-\377' ;;
+			networks|rules) printable='\12\40-\176\200-\377' ;;
 			*) printable='\40-\176\200-\377' ;;
 		esac
 		[ "$(LC_ALL=C tr -d "$printable" < "$input" | wc -c)" -eq 0 ] || exit 1
@@ -48,7 +50,7 @@ for input in "$stage"/* "$stage"/.[!.]* "$stage"/..?*; do
 done
 
 case "$operation" in
-	import_profile|set_credentials|preview|settings|clients|profiles|leases|profile_summary|pending)
+	import_profile|set_credentials|preview|settings|rules|clients|profiles|leases|profile_summary|pending)
 		runtime=$(svpn_runtime_directory) || exit 1
 		if [ ! -e "$runtime/lifecycle.lock" ] && [ ! -L "$runtime/lifecycle.lock" ]; then
 			(umask 077; set -C; : > "$runtime/lifecycle.lock") 2>/dev/null || :
@@ -59,7 +61,7 @@ case "$operation" in
 esac
 
 field() {
-	case "$1" in mode|selection|networks|devices|console|browser|fallback|custom|ack|peer|scope|review|profile|username|password|id) ;; *) return 1 ;; esac
+	case "$1" in mode|selection|networks|rules|ack|peer|review|profile|username|password|id) ;; *) return 1 ;; esac
 	[ -e "$stage/$1" ] || { printf ''; return 0; }
 	svpn_private_file "$stage/$1" || return 1
 	[ "$(wc -c < "$stage/$1")" -le 32768 ] || return 1
@@ -87,6 +89,14 @@ case "$operation" in
 		done
 		value=$(svpn_table_get "$work/app.table" main enabled || :)
 		json_add_string enabled "$value" ;;
+	rules)
+		runtime=$(svpn_runtime_directory) || exit 1
+		work=$(mktemp -d "$runtime/rules.XXXXXXXX") || exit 1
+		trap 'rm -rf -- "$work"' EXIT
+		value=$(svpn_rules_draft "$work") || exit 1
+		json_add_string rules "$value"
+		value=$(svpn_preset_catalog) || exit 1
+		json_add_string presets "$value" ;;
 	clients)
 		value=$(svpn_setup_clients) || exit 1
 		json_add_string clients "$value" ;;
@@ -142,27 +152,27 @@ case "$operation" in
 		username=$(field username) && password=$(field password) || exit 1
 		printf '%s\n%s\n' "$username" "$password" | svpn_profile_credentials "$SVPN_PROFILE_DIR/$id" || exit 1 ;;
 	preview|apply)
-		mode=$(field mode) && selection=$(field selection) && networks=$(field networks) && devices=$(field devices) &&
-		console=$(field console) && browser=$(field browser) && fallback=$(field fallback) && custom=$(field custom) &&
-		ack=$(field ack) && peer=$(field peer) || exit 1
-		[ "$ack" = 1 ] && svpn_valid_ipv4 "$peer" && svpn_valid_bool "$console" &&
-			svpn_valid_bool "$browser" && svpn_valid_bool "$fallback" || exit 1
-		devices=$(svpn_normalize_list device "$devices") && networks=$(svpn_normalize_list identifier "$networks") &&
-			custom=$(svpn_policy_destinations "$custom") || exit 1
-		scope=$(field scope) || exit 1
-		case "$scope" in
-			lan) [ -z "$devices" ] || exit 1 ;;
-			devices) [ -n "$devices" ] || exit 1 ;;
-			*) exit 1 ;;
-		esac
-		[ "$console$browser" != 00 ] || [ -n "$custom" ] || exit 1
+		mode=$(field mode) && selection=$(field selection) && networks=$(field networks) &&
+			ack=$(field ack) && peer=$(field peer) || exit 1
+		[ "$ack" = 1 ] && svpn_valid_ipv4 "$peer" || exit 1
+		networks=$(svpn_normalize_list identifier "$networks") || exit 1
 		if [ "$operation" = preview ]; then
-			svpn_routing_preview "$mode" "$selection" "$networks" "$devices" "$console" "$browser" "$fallback" "$custom"
+			# previewing saves the edited rows as the draft, routing only changes on apply
+			runtime=$(svpn_runtime_directory) || exit 1
+			work=$(mktemp -d "$runtime/rules.XXXXXXXX") || exit 1
+			trap 'rm -rf -- "$work"' EXIT
+			if ! field rules | svpn_rules_save "$work"; then
+				json_add_boolean ok 0
+				json_add_string code rules
+				json_dump
+				exit 0
+			fi
+			svpn_routing_preview_rules "$mode" "$selection" "$networks"
 			exit
 		else
 			svpn_review=$(field review) || exit 1
 			printf '%s\n' "$svpn_review" | grep -Eq '^[a-f0-9]{64}$' || exit 1
-			svpn_lifecycle apply "$mode" "$selection" "$networks" "$devices" "$console" "$browser" "$fallback" "$custom" "$ack" "$peer" >/dev/null || exit 1
+			svpn_lifecycle apply-rules "$mode" "$selection" "$networks" "$ack" "$peer" >/dev/null || exit 1
 			id=$(svpn_tx_pointer pending || :)
 			json_add_string id "$id"
 		fi ;;
