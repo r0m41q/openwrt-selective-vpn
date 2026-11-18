@@ -111,8 +111,13 @@ svpn_uci_clean() (
 )
 
 svpn_uci_export() (
-	# an absolute filename bypasses UCI's shared delta directories
-	uci -q -N export "$1" 2>/dev/null
+	# an absolute filename bypasses UCI's shared delta directories,
+	# but uci reads a dot in it as package.section, so export a dot-free copy
+	runtime=$(svpn_runtime_directory) && copy=$(mktemp "$runtime/uci-XXXXXX") || exit 1
+	status=0
+	cat -- "$1" > "$copy" && uci -q -N export "$copy" 2>/dev/null || status=1
+	rm -f -- "$copy"
+	exit "$status"
 )
 
 svpn_uci_record() (

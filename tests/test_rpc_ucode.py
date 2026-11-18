@@ -26,6 +26,7 @@ class UcodeRpcTests(unittest.TestCase):
             "#!/bin/sh\n"
             '[ "$1" != apply ] || sleep 0.2\n'
             '[ "$(stat -c %a "$2")" = 700 ] || exit 1\n'
+            '[ ! -e "$2/ubus_rpc_session" ] || exit 1\n'
             'for f in "$2"/*; do\n'
             '  [ -e "$f" ] || continue\n'
             '  [ "$(stat -c %a "$f")" = 600 ] || exit 1\n'
@@ -62,7 +63,8 @@ class UcodeRpcTests(unittest.TestCase):
         self.run_ucode(
             """
             let before = glob('/tmp/selective-vpn-rpc.*');
-            let answer = api.apply.call({ args: { mode: 'managed' } });
+            let session = '0123456789abcdef0123456789abcdef';
+            let answer = api.apply.call({ args: { mode: 'managed', ubus_rpc_session: session } });
             check(answer.ok && answer.job);
             let first = api.job.call({ args: { id: answer.job } });
             check(first.state == 'running');

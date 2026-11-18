@@ -75,10 +75,15 @@ function prune() {
 
 function method(operation, args) {
 	return { args, call: function(request) {
+		let input = {};
 		for (let name in keys(request.args)) {
+			// rpcd adds the caller's session to calls made over http
+			if (name == 'ubus_rpc_session')
+				continue;
 			if (!(name in args) || type(request.args[name]) != 'string' ||
 			    length(request.args[name]) > limits[name] || index(request.args[name], '\0') >= 0)
 				return { ok: false, error: 'Invalid input.' };
+			input[name] = request.args[name];
 		}
 		prune();
 		if (length(filter(values(jobs), j => j.state == 'running')) >= 4)
@@ -93,7 +98,7 @@ function method(operation, args) {
 		}
 		let id = sprintf('%d-%d', time(), ++sequence);
 		let job = { state: 'running', created: time() };
-		job.worker = task(() => invoke(operation, request.args), result => {
+		job.worker = task(() => invoke(operation, input), result => {
 			job.state = 'complete';
 			job.result = type(result) == 'object' && result != null ? result :
 				{ ok: false, error: 'Worker stopped. Check diagnostics over SSH.' };

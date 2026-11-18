@@ -61,7 +61,8 @@ class RpcTests(unittest.TestCase):
         )
         self.jshn = self.root / "jshn.sh"
         self.jshn.write_text(
-            "json_init() { :; }\n"
+            # like real jshn, which reads unset variables
+            "json_init() { : \"$JSON_PREFIX\"; }\n"
             "json_add_string() { :; }\n"
             "json_add_boolean() { :; }\n"
             "json_dump() { printf '{}\\n'; }\n"

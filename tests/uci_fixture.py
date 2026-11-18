@@ -8,6 +8,9 @@ def quote(value):
 
 
 def export(path):
+    # real uci reads a dot in the path as package.section
+    if "." in path:
+        raise ValueError("entry not found")
     lexer = shlex.shlex(
         Path(path).read_text(), posix=True, punctuation_chars="\n"
     )

@@ -3,6 +3,8 @@ set -eu
 
 . /usr/lib/selective-vpn/load.sh
 . /usr/share/libubox/jshn.sh
+# jshn reads unset variables
+set +u
 
 [ "$#" -eq 2 ] && [ "$(id -u)" -eq 0 ] || exit 1
 operation=$1
